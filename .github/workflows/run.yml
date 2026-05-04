@@ -2,7 +2,7 @@ name: Run SAM Gov Agent
 
 on:
   schedule:
-    - cron: '15 8 * * *'  # runs daily at 4:15am EST
+    - cron: '15 8 * * *'  # 2:15 PM Nepal time
   workflow_dispatch:
 
 jobs:
@@ -11,17 +11,31 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests openpyxl
 
       - name: Run script
         env:
-          SAM_API_KEY: ${{ secrets.SAM_API_KEY}}
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
+          SEND_EMAIL: "1"
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+          REPORT_CC: ${{ secrets.REPORT_CC }}
         run: python script.py
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sam-results
+          path: |
+            *.csv
+            *.xlsx
