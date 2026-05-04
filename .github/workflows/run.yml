@@ -22,4 +22,6 @@ jobs:
         run: pip install requests
 
       - name: Run script
+        env:
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY}}
         run: python script.py
