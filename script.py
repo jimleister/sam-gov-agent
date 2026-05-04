@@ -2,7 +2,8 @@ import requests
 import csv
 from datetime import datetime
 
-API_KEY = "YOUR_SAM_API_KEY"
+import os
+API_KEY = os.getenv("SAM_API_KEY")
 
 url = "https://api.sam.gov/opportunities/v2/search"
 
