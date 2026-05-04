@@ -2,7 +2,7 @@
 """
 SAM.gov Daily Scan (Get Opportunities Public API v2)
 
-Goals (updated)
+Goals (updated for Weston Trolley + WEXMAC logistics focus)
 - Pull opportunities posted in the last 72 hours, Active only, for notice types:
   Sources Sought, Presolicitation, Solicitation, Combined Synopsis/Solicitation
 - Use OR-logic across structured “signal families” (state, NAICS, PSC):
@@ -61,10 +61,12 @@ POSTED_WINDOW_HOURS = 72
 ACTIVE_ONLY = True
 
 # LOCAL keyword filtering only (no API q=)
-# Weston Trolley target universe: passenger transportation, trolley/shuttle/circulator
-# operations, visitor transport, fleet maintenance, paratransit/microtransit, and
-# event/concession transportation. VOSB/small-business language is handled below
-# as set-aside signals and scoring boosters.
+# Weston Trolley target universe: passenger transportation/trolley/shuttle plus
+# WEXMAC logistics support: cargo movement, vehicle rental/driver services, warehouse,
+# loading/unloading, customs/clearance, water ferry/taxi, base operations/life support,
+# construction/material-handling equipment, lodging/catering, medical logistics, force
+# protection, communications support, food/rations/water. VOSB/small-business language
+# is handled below as set-aside signals and scoring boosters.
 KEYWORDS = [
     # core trolley / shuttle / bus operations
     "trolley", "trolley service", "historic trolley", "streetcar",
@@ -90,25 +92,75 @@ KEYWORDS = [
     "fleet maintenance", "vehicle maintenance", "preventive maintenance",
     "bus maintenance", "transit vehicle", "vehicle leasing", "vehicle rental",
 
+    # WEXMAC logistics and transportation services
+    "cargo truck", "cargo van", "covered truck", "flatbed", "stake truck",
+    "semi truck", "tractor trailer", "reefer van", "refrigerated van",
+    "vehicle rental", "vehicle leasing", "rental with driver", "rental without driver",
+    "sedan with driver", "van with driver", "van without driver",
+    "airport transfer", "airport transfers", "personnel logistic movement",
+    "personnel logistics movement", "logistic movement support", "PLMS",
+    "warehouse", "warehousing", "general warehouse", "hazmat warehouse",
+    "portable warehouse", "storage services", "loading", "unloading",
+    "loading/unloading", "customs clearance", "customs duty", "bill of lading",
+    "freight", "drayage", "cargo handling", "material handling",
+    "water taxi", "ferry", "water ferry", "tug services", "tugboat",
+    "barge", "lighterage", "agricultural cleaning", "pratique",
+
+    # WEXMAC adjacent support areas in the attached PWS
+    "base operations", "life support", "event support site", "event lot",
+    "portable sanitary", "portable shower", "temporary shower", "hand wash station",
+    "portable generator", "portable heater", "portable air conditioner",
+    "trash removal", "dumpster", "potable water", "non-potable water",
+    "laundry services", "billeting", "shelter", "custodial services",
+    "pest services", "waste management", "hazardous waste", "medical waste",
+    "sewage", "black water", "gray water", "food services", "bottled water",
+    "rations",
+
+    # construction equipment / material handling / cranes
+    "construction equipment", "material handling equipment", "crane services",
+    "mobile crane", "barge lift", "forklift", "k loader", "manlift",
+    "scissor lift", "bulldozer", "skid steer", "front end loader",
+    "excavator", "fuel truck", "water distributor truck", "dump truck",
+    "grader", "asphalt paver", "vibratory roller",
+
+    # lodging, conference, catering, medical logistics, communications, force protection
+    "lodging services", "conference services", "catering", "box lunches",
+    "berthing barge", "medical logistics", "ambulance services", "veterinary services",
+    "communications services", "landline", "cellular phones", "sim cards",
+    "wifi internet", "force protection", "security guards", "metal detector",
+    "x-ray baggage", "security trailer", "guard shack", "barrier",
+
     # agency/market signals
     "department of transportation", "dot", "transit authority", "municipal transportation",
     "public transportation", "mass transit", "airport shuttle", "base shuttle",
     "department of veterans affairs", "veterans affairs", "va medical center",
     "department of the interior", "national park service", "nps", "forest service",
     "department of defense", "dod", "installation shuttle", "base transportation",
+    "navfac", "us navy", "military sealift command", "msc", "army", "air force",
 ]
 
 # PSC / classificationCode (signals)
 # V-codes generally represent transportation/travel-type services; J/W codes catch
 # maintenance/lease/rental-related opportunities that may support vehicle fleet work.
 PSCS = [
-    "V212", "V222", "V225", "V226", "V227", "V229",
-    "V999", "R706", "R799", "M1LZ", "S216",
-    "J023", "J025", "J099", "W023", "W025",
+    # Transportation / travel / relocation / vehicle operations
+    "V003", "V112", "V119", "V122", "V129", "V212", "V222",
+    "V225", "V226", "V227", "V229", "V999",
+
+    # Logistics, warehousing, cargo, support services
+    "R405", "R408", "R499", "R602", "R604", "R605", "R606",
+    "R706", "R799", "S216", "S205", "S206", "S208", "S209",
+
+    # Rental/lease and maintenance of vehicles/equipment
+    "W023", "W025", "W039", "W099", "J023", "J025", "J039", "J099",
+
+    # Facilities/base support and food/water/life support
+    "M1LZ", "S201", "S203", "S211", "S222", "S299", "S203",
 ]
 
 # NAICS (signals) — Weston Trolley / ground passenger transportation universe
 NAICS = [
+    # Passenger transportation / Weston Trolley core
     "485113",  # Bus and Other Motor Vehicle Transit Systems
     "485119",  # Other Urban Transit Systems
     "485210",  # Interurban and Rural Bus Transportation
@@ -119,20 +171,62 @@ NAICS = [
     "485991",  # Special Needs Transportation
     "485999",  # Other Transit and Ground Passenger Transportation
     "487110",  # Scenic and Sightseeing Transportation, Land
+
+    # WEXMAC logistics / cargo / warehousing / support services
+    "484110",  # General Freight Trucking, Local
+    "484121",  # General Freight Trucking, Long-Distance, Truckload
+    "484122",  # General Freight Trucking, Long-Distance, LTL
+    "484220",  # Specialized Freight Trucking, Local
+    "484230",  # Specialized Freight Trucking, Long-Distance
+    "488320",  # Marine Cargo Handling
+    "488390",  # Other Support Activities for Water Transportation
+    "488410",  # Motor Vehicle Towing
     "488490",  # Other Support Activities for Road Transportation
+    "488510",  # Freight Transportation Arrangement
+    "488991",  # Packing and Crating
+    "488999",  # Other Support Activities for Transportation
+    "492110",  # Couriers and Express Delivery Services
+    "492210",  # Local Messengers and Local Delivery
+    "493110",  # General Warehousing and Storage
+    "493190",  # Other Warehousing and Storage
+    "541614",  # Process/Physical Distribution/Logistics Consulting Services
+    "561210",  # Facilities Support Services
+    "561320",  # Temporary Help Services (drivers/operators/labor)
+    "561599",  # All Other Travel Arrangement and Reservation Services
+    "561920",  # Convention and Trade Show Organizers
+    "561990",  # All Other Support Services
+
+    # Rental/lease/maintenance of vehicles and equipment
     "532111",  # Passenger Car Rental
     "532112",  # Passenger Car Leasing
     "532120",  # Truck, Utility Trailer, and RV Rental and Leasing
-    "541614",  # Process/Logistics Consulting Services
-    "561210",  # Facilities Support Services
-    "561320",  # Temporary Help Services (drivers/operators when bundled)
-    "561599",  # All Other Travel Arrangement and Reservation Services
-    "561920",  # Convention and Trade Show Organizers
-    "721214",  # Recreational and Vacation Camps
+    "532289",  # Other Consumer Goods Rental
+    "532411",  # Commercial Air/Rail/Water Transportation Equipment Rental
+    "532412",  # Construction/Mining/Forestry Machinery Rental and Leasing
     "811111",  # General Automotive Repair
     "811118",  # Other Automotive Mechanical/Electrical Repair
     "811198",  # All Other Automotive Repair and Maintenance
     "811310",  # Commercial/Industrial Machinery Repair and Maintenance
+
+    # Base operations / life support / adjacent WEXMAC scope
+    "221310",  # Water Supply and Irrigation Systems
+    "236220",  # Commercial and Institutional Building Construction
+    "238990",  # Other Specialty Trade Contractors
+    "541930",  # Translation and Interpretation Services
+    "561612",  # Security Guards and Patrol Services
+    "561720",  # Janitorial Services
+    "561730",  # Landscaping Services
+    "561740",  # Carpet and Upholstery Cleaning Services
+    "561790",  # Other Services to Buildings and Dwellings
+    "562111",  # Solid Waste Collection
+    "562112",  # Hazardous Waste Collection
+    "562119",  # Other Waste Collection
+    "562211",  # Hazardous Waste Treatment and Disposal
+    "562991",  # Septic Tank and Related Services
+    "562998",  # All Other Miscellaneous Waste Management Services
+    "721110",  # Hotels and Motels
+    "721214",  # Recreational and Vacation Camps
+    "722310",  # Food Service Contractors
 ]
 
 # Organization codes as LOCAL signals (prefix match on fullParentPathCode)
@@ -196,7 +290,30 @@ SETASIDE_KEYWORDS = [
 # Logistics-only terms: overhead bump but NOT automatically an international advantage.
 LOGISTICS_TERMS = [
     "guam", "puerto rico", "u.s. virgin islands", "us virgin islands",
-    "oconus", "overseas", "remote site", "island", "ferry",
+    "oconus", "overseas", "remote site", "island", "ferry", "port",
+    "customs", "bill of lading", "hazmat", "multi-site",
+]
+
+# WEXMAC domain-fit terms from the attached PWS. These boost relevance/profitability
+# because Weston supports these logistics areas through the WEXMAC contract vehicle.
+WEXMAC_FOCUS_TERMS = [
+    "cargo truck", "cargo van", "light duty truck", "covered truck", "flatbed",
+    "stake truck", "semi truck", "reefer van", "vehicle rental", "with driver",
+    "without driver", "bus-26", "bus-40", "bus-50", "airport transfer",
+    "personnel logistic movement", "plms", "warehouse", "hazmat warehouse",
+    "portable warehouse", "postage", "loading", "unloading", "customs duty",
+    "customs clearance", "bill of lading", "logistics support", "water taxi",
+    "water ferry", "tug", "barge", "lighterage", "agricultural cleaning",
+    "pratique", "air transport",
+    "base operations", "life support", "event support site", "event lot",
+    "portable sanitary", "portable shower", "hand wash station", "generator",
+    "heater", "air conditioner", "trash removal", "dumpster", "potable water",
+    "laundry", "custodial", "pest", "waste management", "food services",
+    "construction equipment", "material handling", "crane", "forklift", "manlift",
+    "scissor lift", "bulldozer", "excavator", "dump truck",
+    "lodging", "conference", "catering", "box lunches", "medical logistics",
+    "communications", "cellular", "wifi", "force protection", "security guards",
+    "metal detector", "x-ray baggage", "guard shack", "security trailer",
 ]
 
 # Email recipients (prefer env vars so you don't edit code)
@@ -465,6 +582,11 @@ def estimate_ratings(opp: Opportunity) -> None:
         profitability = min(5, profitability + 1)
         evidence.append("Strong Weston Trolley domain fit (trolley/shuttle/passenger transport) may support stronger margin and proposal credibility.")
 
+    # Profitability/relevance booster: WEXMAC logistics fit from attached PWS
+    if any(w in text for w in WEXMAC_FOCUS_TERMS):
+        profitability = min(5, profitability + 1)
+        evidence.append("WEXMAC logistics focus match detected (transport, warehousing, base support, equipment, life support, or related logistics services).")
+
     # Set-aside signal
     if any(s.lower() in text for s in [x.lower() for x in SETASIDE_KEYWORDS]):
         profitability = min(5, profitability + 1)
@@ -474,7 +596,7 @@ def estimate_ratings(opp: Opportunity) -> None:
     opp.evidence = evidence[:5]
     opp.next_step = (
         "Open the SAM notice and download attachments; confirm route scope, vehicle requirements, driver/insurance/licensing, "
-        "set-aside eligibility, mobilization location, and decide prime vs. teaming."
+        "set-aside eligibility, mobilization location, WEXMAC fit/teaming path, and decide prime vs. subcontractor role."
     )
 
 
@@ -668,9 +790,14 @@ def run() -> int:
             if ctry.lower() in text_lower:
                 opp.why_matched.append(f"POP:{ctry}")
 
+        # WEXMAC focus mentions (signals)
+        wexmac_hits = [w for w in WEXMAC_FOCUS_TERMS if w.lower() in text_lower]
+        if wexmac_hits:
+            opp.why_matched.append("WEXMAC:" + ", ".join(wexmac_hits[:4]))
+
         # Set-aside mentions (signals)
         if any(s.lower() in text_lower for s in [x.lower() for x in SETASIDE_KEYWORDS]):
-            opp.why_matched.append("set-aside:text veteran")
+            opp.why_matched.append("set-aside:text veteran/small business")
 
         estimate_ratings(opp)
         opp.score = compute_score(opp)
