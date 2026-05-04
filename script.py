@@ -39,6 +39,10 @@ import os
 import sys
 import json
 import time
+import csv
+import html
+import mimetypes
+from pathlib import Path
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
@@ -316,6 +320,117 @@ WEXMAC_FOCUS_TERMS = [
     "metal detector", "x-ray baggage", "guard shack", "security trailer",
 ]
 
+# Broader WEXMAC/Weston scoring families. These are intentionally not limited to
+# trolley/passenger transport. The PWS spans expeditionary logistics, life support,
+# material handling, lodging/catering, medical logistics, force protection,
+# communications, food/water/supplies, and transportation by road/water/air.
+DOMAIN_FAMILIES = {
+    "Weston core passenger transport": {
+        "weight": 28,
+        "terms": [
+            "trolley", "streetcar", "shuttle", "bus service", "bus services",
+            "charter bus", "motor coach", "motorcoach", "passenger transportation",
+            "ground transportation", "surface transportation", "circulator",
+            "visitor transportation", "park shuttle", "airport transfer",
+            "airport transfers", "paratransit", "microtransit", "driver services",
+            "vehicle operator", "bus operator", "fixed route", "transit operations",
+        ],
+    },
+    "WEXMAC logistics and transportation": {
+        "weight": 26,
+        "terms": [
+            "cargo truck", "cargo van", "light duty truck", "covered truck", "flatbed",
+            "stake truck", "semi truck", "tractor trailer", "reefer", "refrigerated van",
+            "vehicle rental", "vehicle leasing", "with driver", "without driver",
+            "personnel logistic movement", "personnel logistics movement", "plms",
+            "logistics support", "movement support", "loading", "unloading",
+            "customs clearance", "customs duty", "bill of lading", "freight",
+            "drayage", "cargo handling", "postage", "courier", "delivery",
+        ],
+    },
+    "Warehousing and supply chain": {
+        "weight": 20,
+        "terms": [
+            "warehouse", "warehousing", "general warehouse", "hazmat warehouse",
+            "portable warehouse", "storage services", "supply chain", "inventory",
+            "materials management", "packing", "crating", "distribution",
+        ],
+    },
+    "Water transport and port services": {
+        "weight": 20,
+        "terms": [
+            "water taxi", "water ferry", "ferry", "tug", "tugboat", "tow boat",
+            "barge", "lighterage", "marine cargo", "port services", "pier",
+            "sealift", "military sealift", "msc", "pratique", "agricultural cleaning",
+        ],
+    },
+    "Base operations and life support": {
+        "weight": 18,
+        "terms": [
+            "base operations", "life support", "event support site", "event lot",
+            "portable sanitary", "portable shower", "temporary shower", "hand wash station",
+            "generator", "portable generator", "heater", "air conditioner", "cooling",
+            "trash removal", "dumpster", "potable water", "non-potable water",
+            "laundry", "billeting", "shelter", "custodial", "pest", "waste management",
+            "hazardous waste", "medical waste", "gray water", "black water", "sewage",
+            "food services", "bottled water", "rations",
+        ],
+    },
+    "Equipment and material handling": {
+        "weight": 16,
+        "terms": [
+            "construction equipment", "material handling", "crane", "mobile crane",
+            "forklift", "k loader", "manlift", "scissor lift", "bulldozer", "skid steer",
+            "front end loader", "excavator", "fuel truck", "water distributor truck",
+            "dump truck", "grader", "asphalt paver", "vibratory roller", "equipment rental",
+            "equipment services with operator", "equipment services without operator",
+        ],
+    },
+    "Lodging conference and catering": {
+        "weight": 14,
+        "terms": [
+            "lodging", "hotel", "billeting", "conference services", "catering",
+            "box lunches", "food service", "berthing barge", "camp services",
+        ],
+    },
+    "Medical logistics and emergency support": {
+        "weight": 12,
+        "terms": [
+            "medical logistics", "medical facility", "role 1", "role 2", "medevac",
+            "air ambulance", "ambulance services", "veterinary services", "medical supplies",
+        ],
+    },
+    "Force protection and communications": {
+        "weight": 10,
+        "terms": [
+            "force protection", "security guard", "security guards", "metal detector",
+            "x-ray baggage", "explosive detector", "guard shack", "security trailer",
+            "barrier", "radio", "landline", "cellular", "sim cards", "wifi internet",
+            "communications services", "internet connection",
+        ],
+    },
+}
+
+BUYER_FIT_TERMS = {
+    "DOD / military / installation": ["department of defense", "dod", "army", "navy", "air force", "marine corps", "installation", "base", "military", "navfac", "msc", "military sealift"],
+    "Parks / visitor movement": ["national park", "national park service", "nps", "forest service", "recreation area", "visitor center", "concession"],
+    "Transportation agencies": ["department of transportation", "dot", "transit authority", "public transportation", "mass transit", "airport"],
+    "VA / medical campus": ["veterans affairs", "va medical", "medical center"],
+    "Disaster / contingency": ["fema", "disaster", "emergency response", "contingency", "humanitarian", "relief", "evacuation"],
+}
+
+SETASIDE_BOOST_TERMS = {
+    "VOSB/SDVOSB": ["vosb", "veteran-owned", "veteran owned", "sdvosb", "service-disabled", "service disabled veteran"],
+    "Small business": ["small business", "total small business", "small business set-aside", "sbsa", "set-aside", "set aside"],
+}
+
+NEGATIVE_FIT_TERMS = [
+    "software development", "information technology", "it services", "cybersecurity",
+    "research and development", "laboratory", "architect-engineer", "a-e services",
+    "sf330", "design-bid-build", "vertical construction", "janitorial only",
+]
+
+
 # Email recipients (prefer env vars so you don't edit code)
 EMAIL_TO = os.getenv("REPORT_TO", "jleister@westontrolley.com")
 EMAIL_CC = os.getenv("REPORT_CC", "pgurung@westontrolley.com, manish@zenjatra.com")
@@ -515,163 +630,461 @@ def add_structural_reasons(opp: Opportunity) -> None:
 # -----------------------------
 # RATING LOGIC
 # -----------------------------
+def _hits(text: str, terms: List[str]) -> List[str]:
+    out: List[str] = []
+    for term in terms:
+        if term.lower() in text:
+            out.append(term)
+    return list(dict.fromkeys(out))
+
+
+def _family_scores(text: str) -> Tuple[Dict[str, int], Dict[str, List[str]]]:
+    """Return weighted domain family scores and matching evidence terms."""
+    scores: Dict[str, int] = {}
+    evidence: Dict[str, List[str]] = {}
+    for family, cfg in DOMAIN_FAMILIES.items():
+        terms = cfg["terms"]
+        matches = _hits(text, terms)
+        if matches:
+            # Do not let one repeated family dominate just because many near-synonyms appear.
+            scores[family] = int(cfg["weight"]) + min(12, 3 * (len(matches) - 1))
+            evidence[family] = matches[:8]
+    return scores, evidence
+
+
+def _buyer_scores(text: str) -> Tuple[int, List[str]]:
+    score = 0
+    evidence: List[str] = []
+    for family, terms in BUYER_FIT_TERMS.items():
+        matches = _hits(text, terms)
+        if matches:
+            score += 6
+            evidence.append(f"{family}: {', '.join(matches[:3])}")
+    return min(score, 18), evidence[:4]
+
+
+def _setaside_score(text: str) -> Tuple[int, List[str]]:
+    score = 0
+    evidence: List[str] = []
+    for label, terms in SETASIDE_BOOST_TERMS.items():
+        matches = _hits(text, terms)
+        if matches:
+            score += 10 if "VOSB" in label else 7
+            evidence.append(f"{label} signal: {', '.join(matches[:3])}")
+    return min(score, 17), evidence
+
+
 def estimate_ratings(opp: Opportunity) -> None:
     """
-    Ratings:
-    - Complexity (1–5): execution difficulty (security, compliance, integration, uncertainty)
-    - Profitability (1–5): margin potential (specialization, barriers, your advantage)
-    - Overhead (1–5): bid/admin/mobilization burden (clearances, construction admin, travel/logistics)
+    Broader Weston/WEXMAC fit model.
 
-    International advantage: ONLY explicit target countries
-    Guam/OCONUS/Overseas: overhead bump only (not treated as international advantage)
+    Instead of only rewarding trolley/shuttle words, this scores across the full WEXMAC
+    PWS scope: transportation, warehousing, base/life support, equipment/material
+    handling, lodging/catering, medical logistics, communications, force protection,
+    food/water/supplies, and international/contingency logistics.
     """
     text = f"{opp.title}\n{opp.type}\n{opp.baseType}\n{opp.fullParentPathName}\n{opp.description_text}".lower()
 
+    family_scores, family_evidence = _family_scores(text)
+    buyer_score, buyer_evidence = _buyer_scores(text)
+    setaside_score, setaside_evidence = _setaside_score(text)
+
+    country_hits = _hits(text, [c.lower() for c in POP_COUNTRIES])
+    state_hits = _hits(text, [s.lower() for s in POP_STATES])
+    remote_hits = _hits(text, LOGISTICS_TERMS)
+    negative_hits = _hits(text, NEGATIVE_FIT_TERMS)
+
+    domain_fit = min(70, sum(family_scores.values()))
+    geo_fit = 0
+    geo_evidence: List[str] = []
+    if country_hits:
+        geo_fit += 12
+        geo_evidence.append("Target country/region signal: " + ", ".join(country_hits[:5]))
+    if opp.office_state and opp.office_state.upper() in set(POP_STATES):
+        geo_fit += 6
+        geo_evidence.append(f"Target office/place state signal: {opp.office_state.upper()}")
+    elif state_hits:
+        geo_fit += 4
+        geo_evidence.append("Target state text signal: " + ", ".join(state_hits[:5]))
+    if remote_hits:
+        geo_fit += 4
+        geo_evidence.append("Remote/OCONUS/logistics complexity signal: " + ", ".join(remote_hits[:4]))
+    geo_fit = min(18, geo_fit)
+
+    # Convert broad opportunity fit into ratings used by the legacy email columns.
+    total_fit = domain_fit + buyer_score + setaside_score + geo_fit - min(18, 5 * len(negative_hits))
+
     complexity = 3
-    profitability = 3
     overhead = 3
+    profitability = 3
+
+    # Higher domain fit and set-aside fit improves profit potential.
+    if domain_fit >= 45:
+        profitability += 2
+    elif domain_fit >= 24:
+        profitability += 1
+    if setaside_score:
+        profitability += 1
+    if buyer_score >= 12:
+        profitability += 1
+
+    # Some WEXMAC families are inherently heavier to execute.
+    heavy_families = {
+        "Base operations and life support",
+        "Equipment and material handling",
+        "Medical logistics and emergency support",
+        "Force protection and communications",
+        "Water transport and port services",
+    }
+    if any(f in family_scores for f in heavy_families):
+        complexity += 1
+        overhead += 1
+    if country_hits or remote_hits:
+        overhead += 1
+    if any(w in text for w in ["nationwide", "multi-site", "multiple locations", "24/7", "twenty four seven", "classified", "secret", "top secret"]):
+        complexity += 1
+        overhead += 1
+    if negative_hits:
+        complexity += 1
+
+    # Keep routine passenger/vehicle rental work from being unfairly penalized.
+    if any(f in family_scores for f in ["Weston core passenger transport", "WEXMAC logistics and transportation", "Warehousing and supply chain"]):
+        complexity -= 1
+
+    complexity = max(1, min(5, complexity))
+    overhead = max(1, min(5, overhead))
+    profitability = max(1, min(5, profitability))
+
     evidence: List[str] = []
+    if family_scores:
+        top_families = sorted(family_scores.items(), key=lambda x: x[1], reverse=True)[:4]
+        for fam, pts in top_families:
+            evidence.append(f"{fam} fit (+{pts}): {', '.join(family_evidence[fam][:5])}")
+    evidence.extend(setaside_evidence)
+    evidence.extend(buyer_evidence)
+    evidence.extend(geo_evidence)
+    if negative_hits:
+        evidence.append("Possible off-scope/low-fit signal: " + ", ".join(negative_hits[:4]))
 
-    # Lower complexity / overhead: routine passenger transportation and vehicle service work
-    if any(w in text for w in [
-        "shuttle", "trolley", "bus service", "driver services", "vehicle operator",
-        "dispatch", "fixed route", "preventive maintenance", "vehicle maintenance",
-        "fleet maintenance", "repair"
-    ]):
-        complexity = max(1, complexity - 1)
-        overhead = max(1, overhead - 1)
-        evidence.append("Routine passenger transportation/fleet service indicators detected (lower execution complexity/admin burden).")
-
-    # Higher complexity/overhead: heavy compliance, construction, technology integration, or multi-site operations
-    if any(w in text for w in [
-        "sf330", "a-e", "architect", "engineer", "davis-bacon", "bonding", "construction",
-        "software integration", "fare collection", "multi-site", "nationwide", "24/7", "twenty four seven"
-    ]):
-        complexity = min(5, complexity + 1)
-        overhead = min(5, overhead + 1)
-        evidence.append("Complex compliance/integration/multi-site indicators detected (heavier coordination/proposal burden).")
-
-    # Security/clearances
-    if any(w in text for w in ["classified", "sipr", "secret", "top secret"]):
-        complexity = min(5, complexity + 2)
-        overhead = min(5, overhead + 2)
-        evidence.append("Security/clearance language detected (raises complexity and overhead).")
-
-    # International advantage: ONLY explicit countries
-    if any(ct.lower() in text for ct in [c.lower() for c in POP_COUNTRIES]):
-        overhead = min(5, overhead + 1)
-        profitability = min(5, profitability + 1)
-        evidence.append("International country signal detected (logistics overhead exists, but also a competitive advantage).")
-
-    # Logistics-only terms (no profitability boost)
-    if any(term in text for term in LOGISTICS_TERMS):
-        overhead = min(5, overhead + 1)
-        evidence.append("Remote/OCONUS logistics indicator detected (overhead higher; not treated as international advantage).")
-
-    # Profitability boosters: barriers
-    if any(w in text for w in ["oem", "authorized", "brand name", "sole source"]):
-        profitability = min(5, profitability + 1)
-        evidence.append("Barrier-to-entry indicator (OEM/authorized/sole-source cues) may reduce competition.")
-
-    # Profitability boosters: specialization / fit to Weston Trolley
-    if any(w in text for w in [
-        "trolley", "historic trolley", "streetcar", "shuttle", "circulator",
-        "visitor transportation", "park shuttle", "event transportation",
-        "charter bus", "motor coach", "motorcoach", "paratransit", "microtransit"
-    ]):
-        profitability = min(5, profitability + 1)
-        evidence.append("Strong Weston Trolley domain fit (trolley/shuttle/passenger transport) may support stronger margin and proposal credibility.")
-
-    # Profitability/relevance booster: WEXMAC logistics fit from attached PWS
-    if any(w in text for w in WEXMAC_FOCUS_TERMS):
-        profitability = min(5, profitability + 1)
-        evidence.append("WEXMAC logistics focus match detected (transport, warehousing, base support, equipment, life support, or related logistics services).")
-
-    # Set-aside signal
-    if any(s.lower() in text for s in [x.lower() for x in SETASIDE_KEYWORDS]):
-        profitability = min(5, profitability + 1)
-        evidence.append("VOSB/small-business set-aside language detected (eligibility/competition advantage).")
-
-    opp.ratings = {"complexity": complexity, "profitability": profitability, "overhead": overhead}
-    opp.evidence = evidence[:5]
+    opp.ratings = {
+        "complexity": complexity,
+        "profitability": profitability,
+        "overhead": overhead,
+        "domain_fit": domain_fit,
+        "buyer_fit": buyer_score,
+        "setaside_fit": setaside_score,
+        "geo_fit": geo_fit,
+        "total_fit": max(0, total_fit),
+    }
+    opp.evidence = evidence[:7]
     opp.next_step = (
-        "Open the SAM notice and download attachments; confirm route scope, vehicle requirements, driver/insurance/licensing, "
-        "set-aside eligibility, mobilization location, WEXMAC fit/teaming path, and decide prime vs. subcontractor role."
+        "Review the notice/attachments against Weston prime/sub role. Confirm WEXMAC family fit, set-aside status, "
+        "place of performance, vehicle/equipment/labor requirements, mobilization burden, insurance/licensing, and bid deadline."
     )
 
 
 def compute_score(opp: Opportunity) -> float:
     """
-    Feasibility-driven ranking (no “core keyword” gating/boosting):
-      feasibility = Profitability / (Complexity + Overhead)
-      score = feasibility * 10 + 0.15 * relevance_signals
-    """
-    rel = min(MAX_RELEVANCE, float(len(set(opp.why_matched))))
+    Broad business-fit ranking.
 
+    New score is not just feasibility. It gives primary weight to Weston/WEXMAC domain fit,
+    then set-aside eligibility, buyer fit, geography, and feasibility. This avoids burying
+    broad logistics/life-support opportunities just because they are not trolley/shuttle jobs.
+    """
     c = float(opp.ratings.get("complexity", 3))
     o = float(opp.ratings.get("overhead", 3))
     p = float(opp.ratings.get("profitability", 3))
-
-    denom = max(1.0, c + o)
-    feasibility = p / denom
+    feasibility = p / max(1.0, c + o)
     opp.feasibility = feasibility
 
-    return feasibility * FEASIBILITY_MULT + rel * RELEVANCE_WEIGHT
+    domain_fit = float(opp.ratings.get("domain_fit", 0))
+    buyer_fit = float(opp.ratings.get("buyer_fit", 0))
+    setaside_fit = float(opp.ratings.get("setaside_fit", 0))
+    geo_fit = float(opp.ratings.get("geo_fit", 0))
+    rel = min(MAX_RELEVANCE, float(len(set(opp.why_matched))))
+
+    # 0-100ish scale. Domain fit dominates; feasibility still matters but is no longer the gatekeeper.
+    return domain_fit + buyer_fit + setaside_fit + geo_fit + (feasibility * 12.0) + (rel * 0.75)
+
+
+def get_setaside_label(opp: Opportunity) -> str:
+    """Return a compact set-aside label based on local signals found in the notice."""
+    text = " ".join([
+        opp.title or "",
+        opp.description_text or "",
+        " ".join(opp.why_matched or []),
+    ]).lower()
+    labels = []
+    if any(t in text for t in ["vosb", "veteran-owned", "veteran owned", "sdvosb", "service-disabled", "service disabled veteran"]):
+        labels.append("VOSB/SDVOSB")
+    if any(t in text for t in ["small business", "total small business", "small business set-aside", "sbsa", "set-aside", "set aside"]):
+        labels.append("Small Business")
+    return ", ".join(labels) if labels else "Not identified"
+
+
+def get_location_label(opp: Opportunity) -> str:
+    """Return a compact location label from office_state plus country/geography signals."""
+    pieces = []
+    if opp.office_state:
+        pieces.append(opp.office_state)
+    why = " | ".join(opp.why_matched or [])
+    country_hits = []
+    for country in POP_COUNTRIES:
+        if country.lower() in why.lower():
+            country_hits.append(country)
+    if country_hits:
+        pieces.extend(country_hits[:3])
+    return ", ".join(dict.fromkeys(pieces)) if pieces else "Not specified"
+
+
+def get_match_summary(opp: Opportunity, max_items: int = 4) -> str:
+    """Create a short human-readable reason string for the email report."""
+    items = []
+    for ev in opp.evidence or []:
+        if ev and ev not in items:
+            items.append(ev)
+    for why in opp.why_matched or []:
+        if why and why not in items:
+            items.append(why)
+    if not items and opp.keyword_hits:
+        items = ["keywords: " + ", ".join(opp.keyword_hits[:max_items])]
+    return "; ".join(items[:max_items]) if items else "Matched Weston/WEXMAC search signals"
 
 
 def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.datetime) -> str:
+    """Plain-text version of the daily BD report. The HTML version is used for email clients."""
+    all_reported = top + shortlist
+    vosb_count = sum(1 for o in all_reported if "VOSB" in get_setaside_label(o) or "SDVOSB" in get_setaside_label(o))
+    sb_count = sum(1 for o in all_reported if "Small Business" in get_setaside_label(o))
+
     lines: List[str] = []
     lines.append(f"To: {EMAIL_TO}")
     if EMAIL_CC.strip():
         lines.append(f"Cc: {EMAIL_CC}")
-    lines.append(f"Subject: {EMAIL_SUBJECT_BASE} — {as_of:%b %d, %Y}")
+    lines.append(f"Subject: Weston Trolley / WEXMAC Daily Opportunities — {as_of:%b %d, %Y}")
     lines.append("")
-    lines.append(f"Daily SAM.gov scan (posted last ~{POSTED_WINDOW_HOURS} hours). Ranked by feasibility = Profitability / (Complexity + Overhead).")
+    lines.append("Good afternoon,")
+    lines.append("")
+    lines.append(f"Here is today's SAM.gov opportunity scan for Weston Trolley and WEXMAC logistics focus areas.")
+    lines.append(f"Search window: last ~{POSTED_WINDOW_HOURS} hours")
+    lines.append(f"Top opportunities: {len(top)}")
+    lines.append(f"Next-best shortlist: {len(shortlist)}")
+    lines.append(f"VOSB/SDVOSB signals in report: {vosb_count}")
+    lines.append(f"Small Business signals in report: {sb_count}")
     lines.append("")
 
-    lines.append(f"TOP OPPORTUNITIES ({len(top)})")
+    lines.append("HIGH PRIORITY / TOP OPPORTUNITIES")
     lines.append("=" * 72)
+    if not top:
+        lines.append("No top opportunities found for this run.")
     for i, opp in enumerate(top, 1):
-        c = opp.ratings["complexity"]
-        p = opp.ratings["profitability"]
-        o = opp.ratings["overhead"]
-        feas = opp.feasibility
-
         lines.append(f"{i}) {opp.title}")
-        lines.append(f"   - Notice Type: {opp.type} | Posted: {opp.postedDate or '—'} | Due: {opp.responseDeadLine or '—'}")
+        lines.append(f"   - Score: {opp.score:.1f} | Feasibility: {opp.feasibility:.2f}")
         lines.append(f"   - Agency/Office: {opp.fullParentPathName or '—'}")
+        lines.append(f"   - Location: {get_location_label(opp)}")
+        lines.append(f"   - Set-aside: {get_setaside_label(opp)}")
+        lines.append(f"   - Posted: {opp.postedDate or '—'} | Due: {opp.responseDeadLine or '—'}")
         lines.append(f"   - NAICS: {', '.join(opp.naicsCodes) if opp.naicsCodes else '—'} | PSC: {opp.classificationCode or '—'}")
-        if opp.keyword_hits:
-            lines.append(f"   - Keyword hits: {', '.join(opp.keyword_hits[:6])}")
-        lines.append(f"   - Feasibility: {feas:.2f}  (P/(C+O) = {p}/({c}+{o}))")
-        lines.append(f"   - Ratings: Complexity {c}/5 | Profitability {p}/5 | Overhead {o}/5")
-        lines.append(f"   - Why it matched: {', '.join(dict.fromkeys(opp.why_matched)) if opp.why_matched else '—'}")
-        if opp.evidence:
-            lines.append("   - Evidence:")
-            for ev in opp.evidence:
-                lines.append(f"     • {ev}")
-        lines.append(f"   - Recommended next step: {opp.next_step}")
+        lines.append(f"   - Why it matters: {get_match_summary(opp)}")
+        lines.append(f"   - Next step: {opp.next_step}")
         lines.append(f"   - SAM link: {opp.uiLink}")
-        if opp.resourceLinks:
-            lines.append(f"   - Attachments: {len(opp.resourceLinks)} file(s)")
         lines.append("")
 
-    lines.append(f"NEXT-BEST SHORTLIST ({len(shortlist)})")
+    lines.append("OTHER STRONG MATCHES")
     lines.append("=" * 72)
+    if not shortlist:
+        lines.append("No shortlist opportunities found for this run.")
     for opp in shortlist:
-        c = opp.ratings.get("complexity", 3)
-        p = opp.ratings.get("profitability", 3)
-        o = opp.ratings.get("overhead", 3)
-        feas = opp.feasibility
-        reason = ", ".join(list(dict.fromkeys(opp.why_matched))[:2]) if opp.why_matched else "signal match"
-        lines.append(f"- {opp.title} (Feas={feas:.2f}, C={c}/5, P={p}/5, O={o}/5) — {reason}")
+        lines.append(
+            f"- {opp.title} | Score {opp.score:.1f} | {get_location_label(opp)} | "
+            f"{get_setaside_label(opp)} | Due {opp.responseDeadLine or '—'}"
+        )
         lines.append(f"  {opp.uiLink}")
 
     lines.append("")
+    lines.append("Full ranked results are attached in Excel/CSV.")
     return "\n".join(lines)
 
 
-def send_email(subject: str, body: str) -> None:
+def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
+    """Flatten an opportunity for CSV/XLSX output."""
+    return {
+        "rank_group": rank_group,
+        "score": round(float(opp.score or 0), 3),
+        "feasibility": round(float(opp.feasibility or 0), 3),
+        "complexity": opp.ratings.get("complexity", ""),
+        "profitability": opp.ratings.get("profitability", ""),
+        "overhead": opp.ratings.get("overhead", ""),
+        "title": opp.title,
+        "notice_type": opp.type,
+        "posted_date": opp.postedDate,
+        "response_deadline": opp.responseDeadLine,
+        "agency_office": opp.fullParentPathName,
+        "naics": ", ".join(opp.naicsCodes or []),
+        "psc": opp.classificationCode or "",
+        "office_state": opp.office_state or "",
+        "keyword_hits": ", ".join(opp.keyword_hits[:12]),
+        "why_matched": "; ".join(dict.fromkeys(opp.why_matched)),
+        "evidence": " | ".join(opp.evidence),
+        "next_step": opp.next_step,
+        "notice_id": opp.noticeId,
+        "sam_link": opp.uiLink,
+        "attachment_count": len(opp.resourceLinks or []),
+    }
+
+
+def write_results_csv(scored: List[Opportunity], top_ids: set, shortlist_ids: set, as_of: dt.datetime) -> str:
+    filename = f"sam_results_weston_wexmac_{as_of:%Y-%m-%d}.csv"
+    fieldnames = list(opp_to_row(scored[0] if scored else Opportunity('', '', '')).keys())
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for opp in scored:
+            group = "Top" if opp.noticeId in top_ids else ("Shortlist" if opp.noticeId in shortlist_ids else "All Matches")
+            writer.writerow(opp_to_row(opp, group))
+    return filename
+
+
+def write_results_xlsx(scored: List[Opportunity], top_ids: set, shortlist_ids: set, as_of: dt.datetime) -> Optional[str]:
+    """Write an Excel workbook if openpyxl is installed; otherwise skip gracefully."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return None
+
+    filename = f"sam_results_weston_wexmac_{as_of:%Y-%m-%d}.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SAM Results"
+
+    rows = []
+    for opp in scored:
+        group = "Top" if opp.noticeId in top_ids else ("Shortlist" if opp.noticeId in shortlist_ids else "All Matches")
+        rows.append(opp_to_row(opp, group))
+
+    headers = list(rows[0].keys()) if rows else list(opp_to_row(Opportunity('', '', '')).keys())
+    ws.append(headers)
+    for row in rows:
+        ws.append([row.get(h, "") for h in headers])
+
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+    widths = {
+        "A": 14, "B": 10, "C": 12, "D": 10, "E": 12, "F": 10,
+        "G": 55, "H": 14, "I": 14, "J": 22, "K": 45, "L": 20,
+        "M": 12, "N": 14, "O": 35, "P": 50, "Q": 50, "R": 55,
+        "S": 18, "T": 55, "U": 14,
+    }
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    summary = wb.create_sheet("Summary")
+    summary.append(["Metric", "Value"])
+    summary.append(["Generated", as_of.strftime("%Y-%m-%d %H:%M")])
+    summary.append(["Total scored matches", len(scored)])
+    summary.append(["Top opportunities", len(top_ids)])
+    summary.append(["Shortlist opportunities", len(shortlist_ids)])
+    summary.append(["Search window hours", POSTED_WINDOW_HOURS])
+    for cell in summary[1]:
+        cell.font = Font(bold=True)
+    summary.column_dimensions["A"].width = 28
+    summary.column_dimensions["B"].width = 28
+
+    wb.save(filename)
+    return filename
+
+
+def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.datetime) -> str:
+    """Build a clean HTML BD report for the daily email."""
+    def esc(x: Any) -> str:
+        return html.escape(str(x or ""))
+
+    all_reported = top + shortlist
+    vosb_count = sum(1 for o in all_reported if "VOSB" in get_setaside_label(o) or "SDVOSB" in get_setaside_label(o))
+    sb_count = sum(1 for o in all_reported if "Small Business" in get_setaside_label(o))
+
+    def opportunity_card(i: int, opp: Opportunity) -> str:
+        return f"""
+        <tr>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{i}</td>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">
+            <div style="font-weight:700;font-size:14px;">{esc(opp.title)}</div>
+            <div style="margin-top:4px;"><a href="{esc(opp.uiLink)}">Open in SAM.gov</a></div>
+            <div style="margin-top:6px;color:#444;"><strong>Why it matters:</strong> {esc(get_match_summary(opp))}</div>
+          </td>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{esc(opp.fullParentPathName or '—')}</td>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{esc(get_location_label(opp))}</td>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{esc(get_setaside_label(opp))}</td>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{esc(opp.responseDeadLine or '—')}</td>
+          <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;text-align:right;">{opp.score:.1f}<br><span style="color:#666;font-size:12px;">Feas {opp.feasibility:.2f}</span></td>
+        </tr>
+        """
+
+    top_rows = "".join(opportunity_card(i, opp) for i, opp in enumerate(top, 1))
+    if not top_rows:
+        top_rows = "<tr><td colspan='7' style='padding:10px;'>No high-priority opportunities found for this run.</td></tr>"
+
+    shortlist_items = "".join(
+        f"""
+        <li style="margin-bottom:8px;">
+          <strong>{esc(opp.title)}</strong><br>
+          Score {opp.score:.1f} | {esc(get_location_label(opp))} | {esc(get_setaside_label(opp))} | Due {esc(opp.responseDeadLine or '—')}<br>
+          <a href="{esc(opp.uiLink)}">Open in SAM.gov</a>
+        </li>
+        """
+        for opp in shortlist[:15]
+    ) or "<li>No shortlist opportunities found for this run.</li>"
+
+    return f"""
+    <html>
+    <body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
+      <h2 style="margin-bottom:4px;">Weston Trolley / WEXMAC Daily Opportunities</h2>
+      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Search window: last ~{POSTED_WINDOW_HOURS} hours.</p>
+
+      <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;">
+        <tr>
+          <td style="padding:8px 18px 8px 0;"><strong>Total in email</strong><br>{len(all_reported)}</td>
+          <td style="padding:8px 18px 8px 0;"><strong>High priority</strong><br>{len(top)}</td>
+          <td style="padding:8px 18px 8px 0;"><strong>VOSB/SDVOSB signals</strong><br>{vosb_count}</td>
+          <td style="padding:8px 18px 8px 0;"><strong>Small Business signals</strong><br>{sb_count}</td>
+        </tr>
+      </table>
+
+      <h3 style="margin-bottom:8px;">High Priority / Top Opportunities</h3>
+      <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-size:13px;">
+        <thead>
+          <tr style="background:#f2f2f2;">
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ccc;">#</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ccc;">Opportunity</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ccc;">Agency / Office</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ccc;">Location</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ccc;">Set-aside</th>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #ccc;">Due</th>
+            <th style="text-align:right;padding:8px;border-bottom:2px solid #ccc;">Score</th>
+          </tr>
+        </thead>
+        <tbody>{top_rows}</tbody>
+      </table>
+
+      <h3 style="margin-top:22px;">Other Strong Matches</h3>
+      <ol>{shortlist_items}</ol>
+
+      <p style="margin-top:18px;">The attached Excel/CSV files include the full ranked result set with scores, NAICS/PSC, match signals, next steps, and SAM.gov links.</p>
+    </body>
+    </html>
+    """
+
+
+def send_email(subject: str, body: str, html_body: Optional[str] = None, attachments: Optional[List[str]] = None) -> None:
     if not SEND_EMAIL:
         return
     if not SMTP_USER or not SMTP_PASS:
@@ -684,6 +1097,16 @@ def send_email(subject: str, body: str) -> None:
         msg["Cc"] = EMAIL_CC
     msg["Subject"] = subject
     msg.set_content(body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
+
+    for path_str in attachments or []:
+        path = Path(path_str)
+        if not path.exists():
+            continue
+        ctype, _ = mimetypes.guess_type(str(path))
+        maintype, subtype = (ctype or "application/octet-stream").split("/", 1)
+        msg.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
 
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as s:
         s.ehlo()
@@ -816,15 +1239,27 @@ def run() -> int:
     if len(shortlist) < SHORTLIST_MIN:
         shortlist = remaining[:max(SHORTLIST_MIN, len(remaining))]
 
+    top_ids = {o.noticeId for o in top}
+    shortlist_ids = {o.noticeId for o in shortlist}
+
+    csv_path = write_results_csv(scored, top_ids, shortlist_ids, now)
+    xlsx_path = write_results_xlsx(scored, top_ids, shortlist_ids, now)
+
     email_text = build_email(top, shortlist, now)
+    email_html = build_html_email(top, shortlist, now)
 
     with open("email_draft.txt", "w", encoding="utf-8") as f:
         f.write(email_text)
+    with open("email_draft.html", "w", encoding="utf-8") as f:
+        f.write(email_html)
 
     print(email_text)
 
-    subject = f"{EMAIL_SUBJECT_BASE} — {now:%b %d, %Y}"
-    send_email(subject, email_text)
+    subject = f"Weston Trolley / WEXMAC Daily Opportunities ({len(scored)} matches | {len(top)} high priority) — {now:%b %d, %Y}"
+    attachments = [p for p in [xlsx_path, csv_path] if p]
+    send_email(subject, email_text, html_body=email_html, attachments=attachments)
+
+    print(f"[INFO] Wrote spreadsheet files: {', '.join(attachments)}", file=sys.stderr)
 
     print(
         f"\n[INFO] API calls: {total_calls} | Deduped candidates: {len(seen)} | Scored candidates: {len(scored)} | Top: {len(top)} | Shortlist: {len(shortlist)} | SEND_EMAIL={int(SEND_EMAIL)}",
