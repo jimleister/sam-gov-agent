@@ -247,10 +247,12 @@ ORG_CODES = {
 }
 
 # Place of performance: US states/territories (signals)
-# Preserves the existing script regions and adds the previously discussed upper-midwest / mountain states.
+# Preserves the existing script regions and adds the previously discussed upper-midwest /
+# mountain states, plus the tier 3 home-region states (MD, TN, WV, KY, DC, GA).
 POP_STATES = sorted(set([
     "NC", "SC", "VA", "CO", "PA", "PR", "GU",
     "MN", "ND", "SD", "WI",
+    "MD", "TN", "WV", "KY", "DC", "GA",
 ]))
 
 # International PoP targets (signals)
@@ -424,6 +426,26 @@ SETASIDE_BOOST_TERMS = {
     "Small business": ["small business", "total small business", "small business set-aside", "sbsa", "set-aside", "set aside"],
 }
 
+# SAM.gov structured set-aside codes (typeOfSetAside). These are authoritative —
+# preferred over text scanning. SDVOSB is the priority target for Weston.
+SDVOSB_SETASIDE_CODES = {"SDVOSBC", "SDVOSBS"}   # SDVOSB set-aside, SDVOSB sole source
+VOSB_SETASIDE_CODES = {"VSA", "VSS"}             # VOSB set-aside, VOSB sole source
+SMALLBIZ_SETASIDE_CODES = {"SBA", "SBP"}         # Total Small Business set-aside / partial
+
+# Priority boost applied to the final score when an SDVOSB set-aside is detected,
+# so SDVOSB opportunities rank first while everything else still appears.
+SDVOSB_PRIORITY_BOOST = 60.0
+VOSB_PRIORITY_BOOST = 25.0
+
+# Tiered home-region boost (moderate, NC peak). Applied as a general score boost on
+# top of the existing geo scoring, based on place-of-performance / office state.
+# Highest matching tier wins (not additive across tiers).
+HOME_REGION_TIERS = {
+    18.0: {"NC"},                                    # Tier 1 — home base
+    12.0: {"SC", "VA"},                              # Tier 2 — adjacent core
+    6.0:  {"MD", "TN", "WV", "KY", "PA", "DC", "GA"},  # Tier 3 — broader region
+}
+
 NEGATIVE_FIT_TERMS = [
     "software development", "information technology", "it services", "cybersecurity",
     "research and development", "laboratory", "architect-engineer", "a-e services",
@@ -482,6 +504,8 @@ class Opportunity:
     office_state: Optional[str] = None
     description_url: Optional[str] = None
     resourceLinks: List[str] = field(default_factory=list)
+    typeOfSetAside: Optional[str] = None          # structured set-aside code (e.g. SDVOSBC)
+    typeOfSetAsideDescription: Optional[str] = None
 
     # derived
     why_matched: List[str] = field(default_factory=list)
@@ -566,6 +590,8 @@ def normalize(item: Dict[str, Any]) -> Opportunity:
         office_state=office.get("state"),
         description_url=item.get("description"),
         resourceLinks=item.get("resourceLinks") or [],
+        typeOfSetAside=item.get("typeOfSetAside"),
+        typeOfSetAsideDescription=item.get("typeOfSetAsideDescription"),
     )
 
 
@@ -661,6 +687,63 @@ def _buyer_scores(text: str) -> Tuple[int, List[str]]:
             score += 6
             evidence.append(f"{family}: {', '.join(matches[:3])}")
     return min(score, 18), evidence[:4]
+
+
+def home_region_boost(opp: Opportunity) -> Tuple[float, Optional[str]]:
+    """
+    Return the highest matching home-region tier boost and the state that triggered it.
+    Checks the office state first, then place-of-performance state text signals.
+    Highest tier wins (boosts are not stacked across tiers).
+    """
+    candidates = set()
+    if opp.office_state:
+        candidates.add(opp.office_state.strip().upper())
+
+    # Place-of-performance / description text signals (e.g. "NC", "North Carolina" abbrev).
+    blob = " ".join([
+        opp.title or "",
+        opp.description_text or "",
+        " ".join(opp.why_matched or []),
+    ]).upper()
+
+    best_boost = 0.0
+    best_state: Optional[str] = None
+    for boost, states in HOME_REGION_TIERS.items():
+        for st in states:
+            # office state match, or whitespace-delimited state token in text
+            if st in candidates or f" {st} " in f" {blob} " or f" {st}," in blob:
+                if boost > best_boost:
+                    best_boost = boost
+                    best_state = st
+    return best_boost, best_state
+
+
+def classify_setaside(opp: Opportunity) -> Optional[str]:
+    """
+    Return 'SDVOSB', 'VOSB', or 'SmallBiz' based on SAM's structured set-aside code,
+    falling back to the description text only when the structured code is absent.
+    """
+    code = (opp.typeOfSetAside or "").strip().upper()
+    if code in SDVOSB_SETASIDE_CODES:
+        return "SDVOSB"
+    if code in VOSB_SETASIDE_CODES:
+        return "VOSB"
+    if code in SMALLBIZ_SETASIDE_CODES:
+        return "SmallBiz"
+
+    # Fallback: description text. Check SDVOSB first since it is the priority.
+    blob = " ".join([
+        opp.typeOfSetAsideDescription or "",
+        opp.title or "",
+        opp.description_text or "",
+    ]).lower()
+    if any(t in blob for t in ["sdvosb", "service-disabled veteran", "service disabled veteran"]):
+        return "SDVOSB"
+    if any(t in blob for t in ["vosb", "veteran-owned", "veteran owned"]):
+        return "VOSB"
+    if any(t in blob for t in ["small business set-aside", "total small business", "8(a)", "hubzone", "wosb", "edwosb"]):
+        return "SmallBiz"
+    return None
 
 
 def _setaside_score(text: str) -> Tuple[int, List[str]]:
@@ -773,6 +856,7 @@ def estimate_ratings(opp: Opportunity) -> None:
         "domain_fit": domain_fit,
         "buyer_fit": buyer_score,
         "setaside_fit": setaside_score,
+        "setaside_class": classify_setaside(opp),
         "geo_fit": geo_fit,
         "total_fit": max(0, total_fit),
     }
@@ -803,20 +887,45 @@ def compute_score(opp: Opportunity) -> float:
     geo_fit = float(opp.ratings.get("geo_fit", 0))
     rel = min(MAX_RELEVANCE, float(len(set(opp.why_matched))))
 
+    # SDVOSB priority boost: surface SDVOSB set-asides first, without excluding others.
+    setaside_class = opp.ratings.get("setaside_class")
+    priority_boost = 0.0
+    if setaside_class == "SDVOSB":
+        priority_boost = SDVOSB_PRIORITY_BOOST
+    elif setaside_class == "VOSB":
+        priority_boost = VOSB_PRIORITY_BOOST
+
+    # Tiered home-region boost (stacks on top of existing geo_fit), NC peak.
+    region_boost, region_state = home_region_boost(opp)
+    if region_boost:
+        opp.ratings["home_region_boost"] = region_boost
+        opp.ratings["home_region_state"] = region_state
+
     # 0-100ish scale. Domain fit dominates; feasibility still matters but is no longer the gatekeeper.
-    return domain_fit + buyer_fit + setaside_fit + geo_fit + (feasibility * 12.0) + (rel * 0.75)
+    return domain_fit + buyer_fit + setaside_fit + geo_fit + (feasibility * 12.0) + (rel * 0.75) + priority_boost + region_boost
 
 
 def get_setaside_label(opp: Opportunity) -> str:
-    """Return a compact set-aside label based on local signals found in the notice."""
+    """Return a compact set-aside label, preferring SAM's structured set-aside code."""
+    # Structured classification (authoritative) takes priority.
+    cls = opp.ratings.get("setaside_class") if opp.ratings else None
+    if cls == "SDVOSB":
+        return "SDVOSB"
+    if cls == "VOSB":
+        return "VOSB"
+
+    # Fallback to local text signals.
     text = " ".join([
         opp.title or "",
+        opp.typeOfSetAsideDescription or "",
         opp.description_text or "",
         " ".join(opp.why_matched or []),
     ]).lower()
     labels = []
-    if any(t in text for t in ["vosb", "veteran-owned", "veteran owned", "sdvosb", "service-disabled", "service disabled veteran"]):
-        labels.append("VOSB/SDVOSB")
+    if any(t in text for t in ["sdvosb", "service-disabled", "service disabled veteran"]):
+        labels.append("SDVOSB")
+    elif any(t in text for t in ["vosb", "veteran-owned", "veteran owned"]):
+        labels.append("VOSB")
     if any(t in text for t in ["small business", "total small business", "small business set-aside", "sbsa", "set-aside", "set aside"]):
         labels.append("Small Business")
     return ", ".join(labels) if labels else "Not identified"
