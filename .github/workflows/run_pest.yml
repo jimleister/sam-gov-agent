@@ -1,0 +1,40 @@
+name: Run SAM Gov Agent (Pest/Vector)
+
+on:
+  schedule:
+    - cron: '45 10 * * *'  # offset 15 min from logistics run to avoid simultaneous API calls
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests openpyxl
+
+      - name: Run pest/vector script
+        env:
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
+          SEND_EMAIL: "1"
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python script_pest.py
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sam-results-pest
+          path: |
+            sam_results_pest_vector_*.csv
+            sam_results_pest_vector_*.xlsx
