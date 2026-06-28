@@ -5,15 +5,15 @@ SAM.gov Daily Scan (Get Opportunities Public API v2)
 Goals (dedicated Pest / Vector Management scanner)
 - Pull opportunities posted in the last 72 hours, Active only, for notice types:
   Sources Sought, Presolicitation, Solicitation, Combined Synopsis/Solicitation
-- Use OR-logic across structured "signal families" (state, NAICS, PSC):
+- Use OR-logic across structured “signal families” (state, NAICS, PSC):
   run multiple API searches -> union -> dedupe by noticeId
 - Match keywords LOCALLY (title + description). No API q= keyword searches.
 - Rank Top opportunities by a FEASIBILITY ratio derived from:
     Profitability (higher is better) vs (Complexity + Overhead) (lower is better)
   Relevance (number of matched signals) is a light tiebreaker.
-- Top 5-10 should be drawn from *all* matches (keywords/NAICS/PSC/state/org/etc),
-  with no "core keyword" gating/boosting.
-- Shortlist 10-20: next-best items (including state-only matches).
+- Top 5–10 should be drawn from *all* matches (keywords/NAICS/PSC/state/org/etc),
+  with no “core keyword” gating/boosting.
+- Shortlist 10–20: next-best items (including state-only matches).
 
 Email output
 - Writes ./email_draft.txt and prints to stdout.
@@ -117,6 +117,8 @@ KEYWORDS = [
 ]
 
 # PSC / classificationCode (signals)
+# V-codes generally represent transportation/travel-type services; J/W codes catch
+# maintenance/lease/rental-related opportunities that may support vehicle fleet work.
 PSCS = [
     # Transportation / travel / relocation / vehicle operations
     "V003", "V112", "V119", "V122", "V129", "V212", "V222",
@@ -161,6 +163,8 @@ NAICS = [
 ]
 
 # Organization codes as LOCAL signals (prefix match on fullParentPathCode)
+# Kept broad because pest/vector opportunities may come from installations/base
+# support, VA medical campuses, parks/forestry, public health, and municipal agencies.
 ORG_CODES = {
     "DOT": "069",
     "VA": "036",
@@ -172,6 +176,8 @@ ORG_CODES = {
 }
 
 # Place of performance: US states/territories (signals)
+# Preserves the existing script regions and adds the previously discussed upper-midwest /
+# mountain states, plus the tier 3 home-region states (MD, TN, WV, KY, DC, GA).
 POP_STATES = sorted(set([
     "NC", "SC", "VA", "CO", "PA", "PR", "GU",
     "MN", "ND", "SD", "WI",
@@ -179,6 +185,8 @@ POP_STATES = sorted(set([
 ]))
 
 # International PoP targets (signals)
+# South Asia, South America, Central America, and Caribbean coverage. Country names
+# are matched locally in title/description/agency text after structured searches return.
 POP_COUNTRIES = sorted(set([
     # South Asia
     "Afghanistan", "Bangladesh", "Bhutan", "India", "Maldives",
@@ -204,7 +212,8 @@ POP_COUNTRIES = sorted(set([
     "U.S. Virgin Islands", "US Virgin Islands", "Virgin Islands",
 ]))
 
-# Set-aside signals inferred locally from title/description.
+# Set-aside signals inferred locally from title/description. Weston qualifies for
+# Veteran-Owned Small Business and Small Business set-asides.
 SETASIDE_KEYWORDS = [
     "VOSB", "Veteran-Owned", "Veteran Owned", "Veteran-Owned Small Business",
     "Veteran Owned Small Business", "SDVOSB", "Service-Disabled",
@@ -235,7 +244,9 @@ FOCUS_TERMS = [
 # Backwards-compatible alias so any remaining references keep working.
 WEXMAC_FOCUS_TERMS = FOCUS_TERMS
 
-# Pest/Vector scoring families.
+# Pest/Vector scoring families. Primary weight goes to structural/general pest control
+# and public-health vector control; secondary weight to vegetation/weed control and the
+# grounds/sanitation/environmental work these tasks are commonly bundled with.
 DOMAIN_FAMILIES = {
     "Structural and general pest control": {
         "weight": 28,
@@ -317,7 +328,8 @@ SETASIDE_BOOST_TERMS = {
     "Small business": ["small business", "total small business", "small business set-aside", "sbsa", "set-aside", "set aside"],
 }
 
-# SAM.gov structured set-aside codes (typeOfSetAside).
+# SAM.gov structured set-aside codes (typeOfSetAside). These are authoritative —
+# preferred over text scanning. SDVOSB is the priority target for Weston.
 SDVOSB_SETASIDE_CODES = {"SDVOSBC", "SDVOSBS"}   # SDVOSB set-aside, SDVOSB sole source
 VOSB_SETASIDE_CODES = {"VSA", "VSS"}             # VOSB set-aside, VOSB sole source
 SMALLBIZ_SETASIDE_CODES = {"SBA", "SBP"}         # Total Small Business set-aside / partial
@@ -329,6 +341,9 @@ SDVOSB_PRIORITY_BOOST = 15.0
 VOSB_PRIORITY_BOOST = 8.0
 
 # Dedicated pest/vector management focus: primary and secondary target NAICS codes.
+# A notice carrying the PRIMARY NAICS gets a strong top-ranking boost (like SDVOSB);
+# the SECONDARY NAICS gets a meaningful but smaller boost. These stack with the
+# SDVOSB and geo boosts, so an SDVOSB pest-control notice in NC ranks highest of all.
 PRIMARY_NAICS = {"561710"}   # Exterminating and Pest Control Services
 SECONDARY_NAICS = {"561730"} # Landscaping Services (incl. vegetation/vector control)
 PRIMARY_NAICS_BOOST = 55.0
@@ -345,9 +360,10 @@ HOME_REGION_TIERS = {
 
 # Out-of-region penalty: any place-of-performance state NOT in the tiers above is
 # subtracted, so distant pest/vector notices (OR, MN, etc.) stay out of the top 10.
-# PR/GU/territories are exempt. NOTE: PRIMARY-NAICS (561710) notices are exempt from
-# this penalty in compute_score so they surface regardless of location; SECONDARY
-# (561730) and all others are penalized when out of region.
+# With Tier 1 at +30 and a -30 penalty, an NC notice beats an out-of-region one by 60
+# points before any other factor. PR/GU/territories are exempt. NOTE: the PRIMARY/
+# SECONDARY NAICS boost still applies on top, so a genuine 561710/561730 notice can
+# still surface even when out-of-region — exactly as intended.
 OUT_OF_REGION_PENALTY = -30.0
 IN_REGION_STATES = {s for states in HOME_REGION_TIERS.values() for s in states}
 NO_PENALTY_STATES = {"PR", "GU", "VI", "AS", "MP"}  # OCONUS/territories — exempt from penalty
@@ -361,6 +377,9 @@ NEGATIVE_FIT_TERMS = [
 
 
 # Email recipients (prefer env vars so you don't edit code).
+# Accepts either REPORT_TO or EMAIL_TO (and REPORT_CC/EMAIL_CC) so it works
+# regardless of which secret name is configured. Note: a secret that is SET BUT
+# EMPTY returns "" from getenv (not the default), so blanks are coerced to the default.
 EMAIL_TO = (
     (os.getenv("REPORT_TO") or "").strip()
     or (os.getenv("EMAIL_TO") or "").strip()
@@ -381,6 +400,7 @@ MAX_TOTAL_DEDUPED = 6000  # stop early once enough deduped candidates exist
 SLEEP_SECONDS = 0.12
 
 # Feasibility scoring weights
+# Score = (Profitability / (Complexity + Overhead)) * 10  +  0.15 * RelevanceSignals
 FEASIBILITY_MULT = 10.0
 RELEVANCE_WEIGHT = 0.15
 MAX_RELEVANCE = 10.0
@@ -521,12 +541,30 @@ def hard_filters_ok(opp: Opportunity, today: dt.date, due_max: dt.date) -> bool:
     return True
 
 
+def term_matches(text: str, term: str) -> bool:
+    """
+    Whole-word/phrase match. Avoids substring false positives like 'ipm' matching
+    inside 'equipment' or 'shipment'. Multi-word phrases ('pest control') still match
+    as phrases. Word boundaries are applied at the ends of the term; internal spaces and
+    punctuation in the term are matched literally (with flexible whitespace).
+    """
+    term = (term or "").strip().lower()
+    if not term:
+        return False
+    # Build a pattern: escape the term, allow flexible whitespace between words, and
+    # require a word boundary (or non-word char / string edge) on each side.
+    escaped = re.escape(term)
+    # Let any run of whitespace in the term match any whitespace in the text.
+    escaped = re.sub(r"\\\s+", r"\\s+", escaped)
+    pattern = r"(?<!\w)" + escaped + r"(?!\w)"
+    return re.search(pattern, text) is not None
+
+
 def keyword_hits_local(text: str) -> List[str]:
     t = (text or "").lower()
     hits = []
     for kw in KEYWORDS:
-        k = kw.lower()
-        if k and k in t:
+        if kw and term_matches(t, kw):
             hits.append(kw)
     # de-dupe but keep order
     out: List[str] = []
@@ -572,7 +610,7 @@ def add_structural_reasons(opp: Opportunity) -> None:
 def _hits(text: str, terms: List[str]) -> List[str]:
     out: List[str] = []
     for term in terms:
-        if term.lower() in text:
+        if term_matches(text, term):
             out.append(term)
     return list(dict.fromkeys(out))
 
@@ -682,8 +720,12 @@ def _setaside_score(text: str) -> Tuple[int, List[str]]:
 
 def estimate_ratings(opp: Opportunity) -> None:
     """
-    Pest/vector fit model scoring across pest control, vector/public-health control,
-    rodent/wildlife, vegetation/weed, grounds/sanitation, environmental, and licensing.
+    Broader Weston/WEXMAC fit model.
+
+    Instead of only rewarding trolley/shuttle words, this scores across the full WEXMAC
+    PWS scope: transportation, warehousing, base/life support, equipment/material
+    handling, lodging/catering, medical logistics, communications, force protection,
+    food/water/supplies, and international/contingency logistics.
     """
     text = f"{opp.title}\n{opp.type}\n{opp.baseType}\n{opp.fullParentPathName}\n{opp.description_text}".lower()
 
@@ -730,7 +772,7 @@ def estimate_ratings(opp: Opportunity) -> None:
     if buyer_score >= 12:
         profitability += 1
 
-    # Some families are inherently heavier to execute.
+    # Some WEXMAC families are inherently heavier to execute.
     heavy_families = {
         "Vector and public health control",
         "Rodent and wildlife management",
@@ -793,9 +835,11 @@ def estimate_ratings(opp: Opportunity) -> None:
 
 def compute_score(opp: Opportunity) -> float:
     """
-    Pest/vector business-fit ranking. Primary weight to domain fit, then set-aside,
-    buyer fit, geography (tier boost / out-of-region penalty), feasibility, and the
-    primary/secondary NAICS boost.
+    Broad business-fit ranking.
+
+    New score is not just feasibility. It gives primary weight to Weston/WEXMAC domain fit,
+    then set-aside eligibility, buyer fit, geography, and feasibility. This avoids burying
+    broad logistics/life-support opportunities just because they are not trolley/shuttle jobs.
     """
     c = float(opp.ratings.get("complexity", 3))
     o = float(opp.ratings.get("overhead", 3))
@@ -809,7 +853,7 @@ def compute_score(opp: Opportunity) -> float:
     geo_fit = float(opp.ratings.get("geo_fit", 0))
     rel = min(MAX_RELEVANCE, float(len(set(opp.why_matched))))
 
-    # SDVOSB priority boost (modest; geography leads).
+    # SDVOSB priority boost: surface SDVOSB set-asides first, without excluding others.
     setaside_class = opp.ratings.get("setaside_class")
     priority_boost = 0.0
     if setaside_class == "SDVOSB":
