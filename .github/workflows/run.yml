@@ -38,8 +38,3 @@ jobs:
           path: |
             *.csv
             *.xlsx
-        with:
-          name: sam-results
-          path: |
-            *.csv
-            *.xlsx
