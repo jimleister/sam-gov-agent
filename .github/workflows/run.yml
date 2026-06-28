@@ -28,12 +28,16 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          REPORT_TO: ${{ secrets.REPORT_TO }}
-          REPORT_CC: ${{ secrets.REPORT_CC }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: python script.py
 
       - name: Upload results
         uses: actions/upload-artifact@v4
+        with:
+          name: sam-results
+          path: |
+            *.csv
+            *.xlsx
         with:
           name: sam-results
           path: |
