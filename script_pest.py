@@ -2,7 +2,7 @@
 """
 SAM.gov Daily Scan (Get Opportunities Public API v2)
 
-Goals (updated for Weston Trolley + WEXMAC logistics focus)
+Goals (dedicated Pest / Vector Management scanner)
 - Pull opportunities posted in the last 72 hours, Active only, for notice types:
   Sources Sought, Presolicitation, Solicitation, Combined Synopsis/Solicitation
 - Use OR-logic across structured “signal families” (state, NAICS, PSC):
@@ -66,82 +66,54 @@ POSTED_WINDOW_HOURS = 72
 ACTIVE_ONLY = True
 
 # LOCAL keyword filtering only (no API q=)
-# Weston Trolley target universe: passenger transportation/trolley/shuttle plus
-# WEXMAC logistics support: cargo movement, vehicle rental/driver services, warehouse,
-# loading/unloading, customs/clearance, water ferry/taxi, base operations/life support,
-# construction/material-handling equipment, lodging/catering, medical logistics, force
-# protection, communications support, food/rations/water. VOSB/small-business language
-# is handled below as set-aside signals and scoring boosters.
+# Pest / Vector Management target universe: structural and grounds pest control,
+# public-health vector control (mosquito/tick/rodent), integrated pest management (IPM),
+# fumigation, wildlife/nuisance animal control, vegetation/weed control, and the
+# bundled grounds/sanitation work these tasks commonly appear under. Set-aside language
+# (SDVOSB/VOSB) is handled separately as structured signals and scoring boosters.
 KEYWORDS = [
-    # core trolley / shuttle / bus operations
-    "trolley", "trolley service", "historic trolley", "streetcar",
-    "shuttle", "shuttle service", "bus shuttle", "courtesy shuttle",
-    "circulator", "downtown circulator", "visitor shuttle", "park shuttle",
-    "transit operations", "transportation services", "passenger transportation",
-    "ground transportation", "surface transportation", "fixed route",
-    "bus service", "motor coach", "motorcoach", "charter bus", "coach bus",
+    # core pest control
+    "pest control", "pest management", "pest control services", "exterminating",
+    "exterminator", "extermination", "integrated pest management", "ipm",
+    "structural pest control", "general pest control", "commercial pest control",
+    "pest prevention", "pest inspection", "pest survey", "pest monitoring",
 
-    # municipal / campus / event / tourism use cases
-    "event transportation", "special event transportation", "festival shuttle",
-    "campus shuttle", "employee shuttle", "commuter shuttle",
-    "tour transportation", "sightseeing", "visitor transportation",
-    "concessionaire", "concession", "recreation area", "national park",
-    "theme park", "fairgrounds", "parking shuttle", "lot shuttle",
+    # vector / public health
+    "vector control", "vector management", "vector surveillance", "disease vector",
+    "mosquito control", "mosquito abatement", "mosquito surveillance", "larvicide",
+    "larviciding", "adulticide", "adulticiding", "tick control", "tick management",
+    "vector-borne", "vector borne", "public health pest", "arthropod control",
+    "fly control", "filth fly", "biting insect", "sand fly control",
 
-    # accessibility / community transport
-    "paratransit", "microtransit", "demand response", "non-emergency transportation",
-    "mobility services", "senior transportation", "ada transportation",
+    # rodent and wildlife / nuisance animal
+    "rodent control", "rodent management", "rodent abatement", "rodenticide",
+    "rodent exclusion", "bird control", "bird abatement", "avian control",
+    "wildlife control", "wildlife management", "nuisance wildlife", "nuisance animal",
+    "animal damage control", "feral animal", "trapping services", "snake control",
 
-    # fleet, drivers, dispatch, maintenance
-    "vehicle operator", "driver services", "bus operator", "dispatch",
-    "fleet maintenance", "vehicle maintenance", "preventive maintenance",
-    "bus maintenance", "transit vehicle", "vehicle leasing", "vehicle rental",
+    # specific pests
+    "termite", "termite control", "termite treatment", "termite inspection",
+    "bed bug", "bedbug", "cockroach", "roach control", "ant control",
+    "stinging insect", "wasp", "hornet", "bee removal", "fire ant", "fire ant control",
+    "stored product pest", "fumigation", "fumigant", "tenting",
 
-    # WEXMAC logistics and transportation services
-    "cargo truck", "cargo van", "covered truck", "flatbed", "stake truck",
-    "semi truck", "tractor trailer", "reefer van", "refrigerated van",
-    "vehicle rental", "vehicle leasing", "rental with driver", "rental without driver",
-    "sedan with driver", "van with driver", "van without driver",
-    "airport transfer", "airport transfers", "personnel logistic movement",
-    "personnel logistics movement", "logistic movement support", "PLMS",
-    "warehouse", "warehousing", "general warehouse", "hazmat warehouse",
-    "portable warehouse", "storage services", "loading", "unloading",
-    "loading/unloading", "customs clearance", "customs duty", "bill of lading",
-    "freight", "drayage", "cargo handling", "material handling",
-    "water taxi", "ferry", "water ferry", "tug services", "tugboat",
-    "barge", "lighterage", "agricultural cleaning", "pratique",
+    # vegetation / weed / herbicide (561730 secondary + forestry)
+    "weed control", "weed abatement", "vegetation control", "vegetation management",
+    "invasive species", "invasive plant", "noxious weed", "herbicide application",
+    "herbicide treatment", "brush control", "right-of-way vegetation",
+    "aquatic weed", "aquatic vegetation", "grounds maintenance", "landscaping",
+    "turf management", "lawn care", "spraying services",
 
-    # WEXMAC adjacent support areas in the attached PWS
-    "base operations", "life support", "event support site", "event lot",
-    "portable sanitary", "portable shower", "temporary shower", "hand wash station",
-    "portable generator", "portable heater", "portable air conditioner",
-    "trash removal", "dumpster", "potable water", "non-potable water",
-    "laundry services", "billeting", "shelter", "custodial services",
-    "pest services", "waste management", "hazardous waste", "medical waste",
-    "sewage", "black water", "gray water", "food services", "bottled water",
-    "rations",
+    # methods / equipment / compliance
+    "pesticide application", "pesticide", "bait station", "trapping", "spray program",
+    "certified applicator", "licensed applicator", "epa registered", "label compliance",
+    "pesticide applicator", "pest control operator", "wood-destroying organism", "wdo",
 
-    # construction equipment / material handling / cranes
-    "construction equipment", "material handling equipment", "crane services",
-    "mobile crane", "barge lift", "forklift", "k loader", "manlift",
-    "scissor lift", "bulldozer", "skid steer", "front end loader",
-    "excavator", "fuel truck", "water distributor truck", "dump truck",
-    "grader", "asphalt paver", "vibratory roller",
-
-    # lodging, conference, catering, medical logistics, communications, force protection
-    "lodging services", "conference services", "catering", "box lunches",
-    "berthing barge", "medical logistics", "ambulance services", "veterinary services",
-    "communications services", "landline", "cellular phones", "sim cards",
-    "wifi internet", "force protection", "security guards", "metal detector",
-    "x-ray baggage", "security trailer", "guard shack", "barrier",
-
-    # agency/market signals
-    "department of transportation", "dot", "transit authority", "municipal transportation",
-    "public transportation", "mass transit", "airport shuttle", "base shuttle",
+    # buyer / market signals
+    "department of defense", "dod", "installation", "base", "navfac",
     "department of veterans affairs", "veterans affairs", "va medical center",
-    "department of the interior", "national park service", "nps", "forest service",
-    "department of defense", "dod", "installation shuttle", "base transportation",
-    "navfac", "us navy", "military sealift command", "msc", "army", "air force",
+    "national park service", "nps", "forest service", "public health",
+    "preventive medicine", "environmental health", "entomology", "medical entomology",
 ]
 
 # PSC / classificationCode (signals)
@@ -163,80 +135,36 @@ PSCS = [
     "M1LZ", "S201", "S203", "S211", "S222", "S299", "S203",
 ]
 
-# NAICS (signals) — Weston Trolley / ground passenger transportation universe
+# NAICS (signals) — Pest / Vector Management universe
+# Primary target: 561710 (Exterminating and Pest Control Services).
+# Secondary target: 561730 (Landscaping Services — includes vegetation/vector control).
+# Remaining codes are adjacent environmental/grounds/sanitation signals that pest and
+# vector management work commonly appears under.
 NAICS = [
-    # Passenger transportation / Weston Trolley core
-    "485113",  # Bus and Other Motor Vehicle Transit Systems
-    "485119",  # Other Urban Transit Systems
-    "485210",  # Interurban and Rural Bus Transportation
-    "485310",  # Taxi and Ridesharing Services
-    "485320",  # Limousine Service
-    "485410",  # School and Employee Bus Transportation
-    "485510",  # Charter Bus Industry
-    "485991",  # Special Needs Transportation
-    "485999",  # Other Transit and Ground Passenger Transportation
-    "487110",  # Scenic and Sightseeing Transportation, Land
+    # Core pest / vector control
+    "561710",  # Exterminating and Pest Control Services (PRIMARY)
+    "561730",  # Landscaping Services — vegetation/vector control (SECONDARY)
 
-    # WEXMAC logistics / cargo / warehousing / support services
-    "484110",  # General Freight Trucking, Local
-    "484121",  # General Freight Trucking, Long-Distance, Truckload
-    "484122",  # General Freight Trucking, Long-Distance, LTL
-    "484220",  # Specialized Freight Trucking, Local
-    "484230",  # Specialized Freight Trucking, Long-Distance
-    "488320",  # Marine Cargo Handling
-    "488390",  # Other Support Activities for Water Transportation
-    "488410",  # Motor Vehicle Towing
-    "488490",  # Other Support Activities for Road Transportation
-    "488510",  # Freight Transportation Arrangement
-    "488991",  # Packing and Crating
-    "488999",  # Other Support Activities for Transportation
-    "492110",  # Couriers and Express Delivery Services
-    "492210",  # Local Messengers and Local Delivery
-    "493110",  # General Warehousing and Storage
-    "493190",  # Other Warehousing and Storage
-    "541614",  # Process/Physical Distribution/Logistics Consulting Services
-    "561210",  # Facilities Support Services
-    "561320",  # Temporary Help Services (drivers/operators/labor)
-    "561599",  # All Other Travel Arrangement and Reservation Services
-    "561920",  # Convention and Trade Show Organizers
-    "561990",  # All Other Support Services
-
-    # Rental/lease/maintenance of vehicles and equipment
-    "532111",  # Passenger Car Rental
-    "532112",  # Passenger Car Leasing
-    "532120",  # Truck, Utility Trailer, and RV Rental and Leasing
-    "532289",  # Other Consumer Goods Rental
-    "532411",  # Commercial Air/Rail/Water Transportation Equipment Rental
-    "532412",  # Construction/Mining/Forestry Machinery Rental and Leasing
-    "811111",  # General Automotive Repair
-    "811118",  # Other Automotive Mechanical/Electrical Repair
-    "811198",  # All Other Automotive Repair and Maintenance
-    "811310",  # Commercial/Industrial Machinery Repair and Maintenance
-
-    # Base operations / life support / adjacent WEXMAC scope
-    "221310",  # Water Supply and Irrigation Systems
-    "236220",  # Commercial and Institutional Building Construction
-    "238990",  # Other Specialty Trade Contractors
-    "541930",  # Translation and Interpretation Services
-    "561612",  # Security Guards and Patrol Services
+    # Adjacent grounds, sanitation, and environmental services where pest/vector
+    # tasking is frequently bundled
     "561720",  # Janitorial Services
-    "561730",  # Landscaping Services
     "561740",  # Carpet and Upholstery Cleaning Services
     "561790",  # Other Services to Buildings and Dwellings
-    "562111",  # Solid Waste Collection
-    "562112",  # Hazardous Waste Collection
-    "562119",  # Other Waste Collection
-    "562211",  # Hazardous Waste Treatment and Disposal
-    "562991",  # Septic Tank and Related Services
+    "115112",  # Soil Preparation, Planting, and Cultivating (crop/vegetation mgmt)
+    "115310",  # Support Activities for Forestry (vegetation/invasive control)
+    "562910",  # Remediation Services
     "562998",  # All Other Miscellaneous Waste Management Services
-    "721110",  # Hotels and Motels
-    "721214",  # Recreational and Vacation Camps
-    "722310",  # Food Service Contractors
+    "541690",  # Other Scientific and Technical Consulting (incl. entomology/IPM)
+    "541620",  # Environmental Consulting Services
+    "924110",  # Admin of Air/Water/Solid Waste & Environmental Programs
+    "238990",  # Other Specialty Trade Contractors
+    "561210",  # Facilities Support Services
+    "561990",  # All Other Support Services
 ]
 
 # Organization codes as LOCAL signals (prefix match on fullParentPathCode)
-# Kept broad because Weston Trolley opportunities may come from transportation,
-# installation/base support, parks/visitor services, VA, and municipal-adjacent agencies.
+# Kept broad because pest/vector opportunities may come from installations/base
+# support, VA medical campuses, parks/forestry, public health, and municipal agencies.
 ORG_CODES = {
     "DOT": "069",
     "VA": "036",
@@ -301,125 +229,98 @@ LOGISTICS_TERMS = [
     "customs", "bill of lading", "hazmat", "multi-site",
 ]
 
-# WEXMAC domain-fit terms from the attached PWS. These boost relevance/profitability
-# because Weston supports these logistics areas through the WEXMAC contract vehicle.
-WEXMAC_FOCUS_TERMS = [
-    "cargo truck", "cargo van", "light duty truck", "covered truck", "flatbed",
-    "stake truck", "semi truck", "reefer van", "vehicle rental", "with driver",
-    "without driver", "bus-26", "bus-40", "bus-50", "airport transfer",
-    "personnel logistic movement", "plms", "warehouse", "hazmat warehouse",
-    "portable warehouse", "postage", "loading", "unloading", "customs duty",
-    "customs clearance", "bill of lading", "logistics support", "water taxi",
-    "water ferry", "tug", "barge", "lighterage", "agricultural cleaning",
-    "pratique", "air transport",
-    "base operations", "life support", "event support site", "event lot",
-    "portable sanitary", "portable shower", "hand wash station", "generator",
-    "heater", "air conditioner", "trash removal", "dumpster", "potable water",
-    "laundry", "custodial", "pest", "waste management", "food services",
-    "construction equipment", "material handling", "crane", "forklift", "manlift",
-    "scissor lift", "bulldozer", "excavator", "dump truck",
-    "lodging", "conference", "catering", "box lunches", "medical logistics",
-    "communications", "cellular", "wifi", "force protection", "security guards",
-    "metal detector", "x-ray baggage", "guard shack", "security trailer",
+# Pest/vector domain-fit terms. These boost relevance/profitability because they are
+# the on-mission services this scanner is built to surface.
+FOCUS_TERMS = [
+    "pest control", "pest management", "exterminating", "integrated pest management",
+    "ipm", "vector control", "vector management", "mosquito control", "mosquito abatement",
+    "larvicide", "adulticide", "tick control", "rodent control", "rodenticide",
+    "bird control", "wildlife control", "nuisance wildlife", "termite", "bed bug",
+    "cockroach", "fumigation", "fumigant", "weed control", "vegetation management",
+    "invasive species", "herbicide", "brush control", "aquatic weed", "pesticide application",
+    "bait station", "certified applicator", "licensed applicator", "wood-destroying organism",
+    "entomology", "preventive medicine", "environmental health", "public health pest",
 ]
+# Backwards-compatible alias so any remaining references keep working.
+WEXMAC_FOCUS_TERMS = FOCUS_TERMS
 
-# Broader WEXMAC/Weston scoring families. These are intentionally not limited to
-# trolley/passenger transport. The PWS spans expeditionary logistics, life support,
-# material handling, lodging/catering, medical logistics, force protection,
-# communications, food/water/supplies, and transportation by road/water/air.
+# Pest/Vector scoring families. Primary weight goes to structural/general pest control
+# and public-health vector control; secondary weight to vegetation/weed control and the
+# grounds/sanitation/environmental work these tasks are commonly bundled with.
 DOMAIN_FAMILIES = {
-    "Weston core passenger transport": {
+    "Structural and general pest control": {
         "weight": 28,
         "terms": [
-            "trolley", "streetcar", "shuttle", "bus service", "bus services",
-            "charter bus", "motor coach", "motorcoach", "passenger transportation",
-            "ground transportation", "surface transportation", "circulator",
-            "visitor transportation", "park shuttle", "airport transfer",
-            "airport transfers", "paratransit", "microtransit", "driver services",
-            "vehicle operator", "bus operator", "fixed route", "transit operations",
+            "pest control", "pest management", "pest control services", "exterminating",
+            "exterminator", "extermination", "integrated pest management", "ipm",
+            "structural pest control", "general pest control", "commercial pest control",
+            "pest prevention", "pest inspection", "termite", "termite control",
+            "bed bug", "bedbug", "cockroach", "roach control", "ant control",
+            "fire ant", "stinging insect", "wasp", "fumigation", "fumigant",
+            "bait station", "wood-destroying organism", "wdo",
         ],
     },
-    "WEXMAC logistics and transportation": {
+    "Vector and public health control": {
         "weight": 26,
         "terms": [
-            "cargo truck", "cargo van", "light duty truck", "covered truck", "flatbed",
-            "stake truck", "semi truck", "tractor trailer", "reefer", "refrigerated van",
-            "vehicle rental", "vehicle leasing", "with driver", "without driver",
-            "personnel logistic movement", "personnel logistics movement", "plms",
-            "logistics support", "movement support", "loading", "unloading",
-            "customs clearance", "customs duty", "bill of lading", "freight",
-            "drayage", "cargo handling", "postage", "courier", "delivery",
+            "vector control", "vector management", "vector surveillance", "disease vector",
+            "mosquito control", "mosquito abatement", "mosquito surveillance", "larvicide",
+            "larviciding", "adulticide", "adulticiding", "tick control", "tick management",
+            "vector-borne", "vector borne", "public health pest", "arthropod control",
+            "fly control", "filth fly", "biting insect", "sand fly control",
+            "preventive medicine", "medical entomology", "entomology", "environmental health",
         ],
     },
-    "Warehousing and supply chain": {
+    "Rodent and wildlife management": {
         "weight": 20,
         "terms": [
-            "warehouse", "warehousing", "general warehouse", "hazmat warehouse",
-            "portable warehouse", "storage services", "supply chain", "inventory",
-            "materials management", "packing", "crating", "distribution",
+            "rodent control", "rodent management", "rodent abatement", "rodenticide",
+            "rodent exclusion", "bird control", "bird abatement", "avian control",
+            "wildlife control", "wildlife management", "nuisance wildlife", "nuisance animal",
+            "animal damage control", "feral animal", "trapping services", "snake control",
         ],
     },
-    "Water transport and port services": {
-        "weight": 20,
-        "terms": [
-            "water taxi", "water ferry", "ferry", "tug", "tugboat", "tow boat",
-            "barge", "lighterage", "marine cargo", "port services", "pier",
-            "sealift", "military sealift", "msc", "pratique", "agricultural cleaning",
-        ],
-    },
-    "Base operations and life support": {
+    "Vegetation and weed control": {
         "weight": 18,
         "terms": [
-            "base operations", "life support", "event support site", "event lot",
-            "portable sanitary", "portable shower", "temporary shower", "hand wash station",
-            "generator", "portable generator", "heater", "air conditioner", "cooling",
-            "trash removal", "dumpster", "potable water", "non-potable water",
-            "laundry", "billeting", "shelter", "custodial", "pest", "waste management",
-            "hazardous waste", "medical waste", "gray water", "black water", "sewage",
-            "food services", "bottled water", "rations",
+            "weed control", "weed abatement", "vegetation control", "vegetation management",
+            "invasive species", "invasive plant", "noxious weed", "herbicide application",
+            "herbicide treatment", "brush control", "right-of-way vegetation",
+            "aquatic weed", "aquatic vegetation", "turf management", "spraying services",
         ],
     },
-    "Equipment and material handling": {
-        "weight": 16,
-        "terms": [
-            "construction equipment", "material handling", "crane", "mobile crane",
-            "forklift", "k loader", "manlift", "scissor lift", "bulldozer", "skid steer",
-            "front end loader", "excavator", "fuel truck", "water distributor truck",
-            "dump truck", "grader", "asphalt paver", "vibratory roller", "equipment rental",
-            "equipment services with operator", "equipment services without operator",
-        ],
-    },
-    "Lodging conference and catering": {
-        "weight": 14,
-        "terms": [
-            "lodging", "hotel", "billeting", "conference services", "catering",
-            "box lunches", "food service", "berthing barge", "camp services",
-        ],
-    },
-    "Medical logistics and emergency support": {
+    "Grounds and sanitation services": {
         "weight": 12,
         "terms": [
-            "medical logistics", "medical facility", "role 1", "role 2", "medevac",
-            "air ambulance", "ambulance services", "veterinary services", "medical supplies",
+            "grounds maintenance", "landscaping", "lawn care", "janitorial",
+            "custodial", "carpet cleaning", "building services", "sanitation",
+            "facility services", "facilities support",
         ],
     },
-    "Force protection and communications": {
+    "Environmental and remediation": {
         "weight": 10,
         "terms": [
-            "force protection", "security guard", "security guards", "metal detector",
-            "x-ray baggage", "explosive detector", "guard shack", "security trailer",
-            "barrier", "radio", "landline", "cellular", "sim cards", "wifi internet",
-            "communications services", "internet connection",
+            "remediation", "environmental consulting", "environmental services",
+            "hazardous waste", "waste management", "abatement", "decontamination",
+            "environmental compliance",
+        ],
+    },
+    "Pesticide compliance and licensing": {
+        "weight": 8,
+        "terms": [
+            "pesticide", "pesticide application", "certified applicator",
+            "licensed applicator", "pesticide applicator", "pest control operator",
+            "epa registered", "label compliance", "restricted use pesticide",
         ],
     },
 }
 
 BUYER_FIT_TERMS = {
-    "DOD / military / installation": ["department of defense", "dod", "army", "navy", "air force", "marine corps", "installation", "base", "military", "navfac", "msc", "military sealift"],
-    "Parks / visitor movement": ["national park", "national park service", "nps", "forest service", "recreation area", "visitor center", "concession"],
-    "Transportation agencies": ["department of transportation", "dot", "transit authority", "public transportation", "mass transit", "airport"],
-    "VA / medical campus": ["veterans affairs", "va medical", "medical center"],
-    "Disaster / contingency": ["fema", "disaster", "emergency response", "contingency", "humanitarian", "relief", "evacuation"],
+    "DOD / military / installation": ["department of defense", "dod", "army", "navy", "air force", "marine corps", "installation", "base", "military", "navfac", "preventive medicine", "pest management coordinator"],
+    "VA / medical campus": ["veterans affairs", "va medical", "medical center", "hospital", "clinic"],
+    "Parks / forestry / interior": ["national park", "national park service", "nps", "forest service", "bureau of land management", "blm", "fish and wildlife", "refuge"],
+    "Public health / environmental": ["public health", "environmental health", "vector control district", "mosquito control district", "abatement district", "department of health"],
+    "Facilities / grounds / municipal": ["facilities management", "grounds", "school district", "housing authority", "municipal", "county", "general services"],
 }
 
 SETASIDE_BOOST_TERMS = {
@@ -433,12 +334,19 @@ SDVOSB_SETASIDE_CODES = {"SDVOSBC", "SDVOSBS"}   # SDVOSB set-aside, SDVOSB sole
 VOSB_SETASIDE_CODES = {"VSA", "VSS"}             # VOSB set-aside, VOSB sole source
 SMALLBIZ_SETASIDE_CODES = {"SBA", "SBP"}         # Total Small Business set-aside / partial
 
-# Priority boost applied to the final score when an SDVOSB set-aside is detected.
-# Lowered from 60 to 25 so SDVOSB acts as a strong tiebreaker among similar-fit
-# notices rather than dominating ranking regardless of domain fit. VOSB kept below
-# SDVOSB so service-disabled set-asides still rank first among veteran set-asides.
-SDVOSB_PRIORITY_BOOST = 25.0
-VOSB_PRIORITY_BOOST = 12.0
+# Priority boost applied to the final score when an SDVOSB set-aside is detected,
+# so SDVOSB opportunities rank first while everything else still appears.
+SDVOSB_PRIORITY_BOOST = 60.0
+VOSB_PRIORITY_BOOST = 25.0
+
+# Dedicated pest/vector management focus: primary and secondary target NAICS codes.
+# A notice carrying the PRIMARY NAICS gets a strong top-ranking boost (like SDVOSB);
+# the SECONDARY NAICS gets a meaningful but smaller boost. These stack with the
+# SDVOSB and geo boosts, so an SDVOSB pest-control notice in NC ranks highest of all.
+PRIMARY_NAICS = {"561710"}   # Exterminating and Pest Control Services
+SECONDARY_NAICS = {"561730"} # Landscaping Services (incl. vegetation/vector control)
+PRIMARY_NAICS_BOOST = 55.0
+SECONDARY_NAICS_BOOST = 25.0
 
 # Tiered home-region boost (moderate, NC peak). Applied as a general score boost on
 # top of the existing geo scoring, based on place-of-performance / office state.
@@ -449,20 +357,11 @@ HOME_REGION_TIERS = {
     6.0:  {"MD", "TN", "WV", "KY", "PA", "DC", "GA"},  # Tier 3 — broader region
 }
 
-# Out-of-region penalty: any place-of-performance state NOT in the tiers above is
-# subtracted from the score, so distant opportunities (AZ, CA, ME, etc.) stay out
-# of the top results. With tiers topping out at +18 (NC), a -25 penalty creates a
-# 43-point swing vs. NC — enough that far states won't crack the top 10 unless little
-# in-region exists. PR/GU and other OCONUS/territories are left unpenalized because
-# WEXMAC is expeditionary and those locations are in-scope.
-OUT_OF_REGION_PENALTY = -25.0
-IN_REGION_STATES = {s for states in HOME_REGION_TIERS.values() for s in states}
-NO_PENALTY_STATES = {"PR", "GU", "VI", "AS", "MP"}  # OCONUS/territories — exempt from penalty
-
 NEGATIVE_FIT_TERMS = [
     "software development", "information technology", "it services", "cybersecurity",
-    "research and development", "laboratory", "architect-engineer", "a-e services",
-    "sf330", "design-bid-build", "vertical construction", "janitorial only",
+    "architect-engineer", "a-e services", "sf330", "design-bid-build",
+    "vertical construction", "research and development grant", "vehicle lease",
+    "passenger transportation", "shuttle service",
 ]
 
 
@@ -479,7 +378,7 @@ EMAIL_CC = (
     (os.getenv("REPORT_CC") or "").strip()
     or (os.getenv("EMAIL_CC") or "").strip()
 )
-EMAIL_SUBJECT_BASE = "SAM.gov Opportunities – last 72 hours (Feasibility Ranked)"
+EMAIL_SUBJECT_BASE = "SAM.gov Pest/Vector Opportunities – last 72 hours (Ranked)"
 
 TOP_MIN, TOP_MAX = 5, 10
 SHORTLIST_MIN, SHORTLIST_MAX = 10, 20
@@ -714,36 +613,27 @@ def _buyer_scores(text: str) -> Tuple[int, List[str]]:
 
 def home_region_boost(opp: Opportunity) -> Tuple[float, Optional[str]]:
     """
-    Return a geographic score adjustment and the state that drove it.
-
-    In-region states get a tiered boost (NC peak). Out-of-region states get a flat
-    penalty so distant work doesn't crowd the top results. OCONUS/territory place-of-
-    performance is left unpenalized (expeditionary scope). When there's no concrete
-    office state, fall back to text signals for a boost only — ambiguous text is never
-    penalized, to avoid burying national/multi-state notices that lack a clean state field.
+    Return the highest matching home-region tier boost and the state that triggered it.
+    Checks the office state first, then place-of-performance state text signals.
+    Highest tier wins (boosts are not stacked across tiers).
     """
-    state = opp.office_state.strip().upper() if opp.office_state else None
+    candidates = set()
+    if opp.office_state:
+        candidates.add(opp.office_state.strip().upper())
 
-    if state:
-        # Concrete office state: tier boost if in-region, penalty if out-of-region.
-        for boost, states in HOME_REGION_TIERS.items():
-            if state in states:
-                return boost, state
-        if state not in NO_PENALTY_STATES:
-            return OUT_OF_REGION_PENALTY, state
-        return 0.0, state
-
-    # No office state: text-signal boost only (never penalize on ambiguity).
+    # Place-of-performance / description text signals (e.g. "NC", "North Carolina" abbrev).
     blob = " ".join([
         opp.title or "",
         opp.description_text or "",
         " ".join(opp.why_matched or []),
     ]).upper()
+
     best_boost = 0.0
     best_state: Optional[str] = None
     for boost, states in HOME_REGION_TIERS.items():
         for st in states:
-            if f" {st} " in f" {blob} " or f" {st}," in blob:
+            # office state match, or whitespace-delimited state token in text
+            if st in candidates or f" {st} " in f" {blob} " or f" {st}," in blob:
                 if boost > best_boost:
                     best_boost = boost
                     best_state = st
@@ -845,11 +735,9 @@ def estimate_ratings(opp: Opportunity) -> None:
 
     # Some WEXMAC families are inherently heavier to execute.
     heavy_families = {
-        "Base operations and life support",
-        "Equipment and material handling",
-        "Medical logistics and emergency support",
-        "Force protection and communications",
-        "Water transport and port services",
+        "Vector and public health control",
+        "Rodent and wildlife management",
+        "Environmental and remediation",
     }
     if any(f in family_scores for f in heavy_families):
         complexity += 1
@@ -862,8 +750,8 @@ def estimate_ratings(opp: Opportunity) -> None:
     if negative_hits:
         complexity += 1
 
-    # Keep routine passenger/vehicle rental work from being unfairly penalized.
-    if any(f in family_scores for f in ["Weston core passenger transport", "WEXMAC logistics and transportation", "Warehousing and supply chain"]):
+    # Keep routine recurring pest/grounds work from being unfairly penalized.
+    if any(f in family_scores for f in ["Structural and general pest control", "Vegetation and weed control", "Grounds and sanitation services"]):
         complexity -= 1
 
     complexity = max(1, min(5, complexity))
@@ -892,9 +780,16 @@ def estimate_ratings(opp: Opportunity) -> None:
         "geo_fit": geo_fit,
         "total_fit": max(0, total_fit),
     }
+    # Flag primary/secondary target NAICS prominently in the evidence list.
+    _codes = set(opp.naicsCodes or [])
+    if _codes & PRIMARY_NAICS:
+        evidence.insert(0, "PRIMARY NAICS 561710 (Pest Control) — flagged primary")
+    elif _codes & SECONDARY_NAICS:
+        evidence.insert(0, "SECONDARY NAICS 561730 (Landscaping/Vegetation) — flagged secondary")
+
     opp.evidence = evidence[:7]
     opp.next_step = (
-        "Review the notice/attachments against Weston prime/sub role. Confirm WEXMAC family fit, set-aside status, "
+        "Review the notice/attachments against WTC prime/sub role. Confirm pest/vector scope fit, NAICS (561710/561730), set-aside status, "
         "place of performance, vehicle/equipment/labor requirements, mobilization burden, insurance/licensing, and bid deadline."
     )
 
@@ -929,12 +824,27 @@ def compute_score(opp: Opportunity) -> float:
 
     # Tiered home-region boost (stacks on top of existing geo_fit), NC peak.
     region_boost, region_state = home_region_boost(opp)
-    if region_boost != 0.0:
+    if region_boost:
         opp.ratings["home_region_boost"] = region_boost
         opp.ratings["home_region_state"] = region_state
 
+    # Primary/secondary NAICS boost: a notice carrying 561710 (pest control) ranks at
+    # the top like an SDVOSB; 561730 (landscaping/vegetation) gets a strong secondary lift.
+    codes = set(opp.naicsCodes or [])
+    naics_boost = 0.0
+    naics_tier = None
+    if codes & PRIMARY_NAICS:
+        naics_boost = PRIMARY_NAICS_BOOST
+        naics_tier = "PRIMARY"
+    elif codes & SECONDARY_NAICS:
+        naics_boost = SECONDARY_NAICS_BOOST
+        naics_tier = "SECONDARY"
+    if naics_tier:
+        opp.ratings["naics_tier"] = naics_tier
+        opp.ratings["naics_boost"] = naics_boost
+
     # 0-100ish scale. Domain fit dominates; feasibility still matters but is no longer the gatekeeper.
-    return domain_fit + buyer_fit + setaside_fit + geo_fit + (feasibility * 12.0) + (rel * 0.75) + priority_boost + region_boost
+    return domain_fit + buyer_fit + setaside_fit + geo_fit + (feasibility * 12.0) + (rel * 0.75) + priority_boost + region_boost + naics_boost
 
 
 def get_setaside_label(opp: Opportunity) -> str:
@@ -989,7 +899,7 @@ def get_match_summary(opp: Opportunity, max_items: int = 4) -> str:
             items.append(why)
     if not items and opp.keyword_hits:
         items = ["keywords: " + ", ".join(opp.keyword_hits[:max_items])]
-    return "; ".join(items[:max_items]) if items else "Matched Weston/WEXMAC search signals"
+    return "; ".join(items[:max_items]) if items else "Matched pest/vector search signals"
 
 
 def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.datetime) -> str:
@@ -1002,11 +912,11 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append(f"To: {EMAIL_TO}")
     if EMAIL_CC.strip():
         lines.append(f"Cc: {EMAIL_CC}")
-    lines.append(f"Subject: Weston Trolley / WEXMAC Daily Opportunities — {as_of:%b %d, %Y}")
+    lines.append(f"Subject: WTC Pest/Vector Management Daily Opportunities — {as_of:%b %d, %Y}")
     lines.append("")
     lines.append("Good afternoon,")
     lines.append("")
-    lines.append(f"Here is today's SAM.gov opportunity scan for Weston Trolley and WEXMAC logistics focus areas.")
+    lines.append(f"Here is today's SAM.gov opportunity scan for pest and vector management focus areas.")
     lines.append(f"Search window: last ~{POSTED_WINDOW_HOURS} hours")
     lines.append(f"Top opportunities: {len(top)}")
     lines.append(f"Next-best shortlist: {len(shortlist)}")
@@ -1075,7 +985,7 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
 
 
 def write_results_csv(scored: List[Opportunity], top_ids: set, shortlist_ids: set, as_of: dt.datetime) -> str:
-    filename = f"sam_results_weston_wexmac_{as_of:%Y-%m-%d}.csv"
+    filename = f"sam_results_pest_vector_{as_of:%Y-%m-%d}.csv"
     fieldnames = list(opp_to_row(scored[0] if scored else Opportunity('', '', '')).keys())
     with open(filename, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -1095,7 +1005,7 @@ def write_results_xlsx(scored: List[Opportunity], top_ids: set, shortlist_ids: s
     except Exception:
         return None
 
-    filename = f"sam_results_weston_wexmac_{as_of:%Y-%m-%d}.xlsx"
+    filename = f"sam_results_pest_vector_{as_of:%Y-%m-%d}.xlsx"
     wb = Workbook()
     ws = wb.active
     ws.title = "SAM Results"
@@ -1188,7 +1098,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
     return f"""
     <html>
     <body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
-      <h2 style="margin-bottom:4px;">Weston Trolley / WEXMAC Daily Opportunities</h2>
+      <h2 style="margin-bottom:4px;">Pest / Vector Management Daily Opportunities</h2>
       <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Search window: last ~{POSTED_WINDOW_HOURS} hours.</p>
 
       <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;">
@@ -1371,10 +1281,10 @@ def run() -> int:
             if ctry.lower() in text_lower:
                 opp.why_matched.append(f"POP:{ctry}")
 
-        # WEXMAC focus mentions (signals)
-        wexmac_hits = [w for w in WEXMAC_FOCUS_TERMS if w.lower() in text_lower]
+        # Pest/vector focus mentions (signals)
+        wexmac_hits = [w for w in FOCUS_TERMS if w.lower() in text_lower]
         if wexmac_hits:
-            opp.why_matched.append("WEXMAC:" + ", ".join(wexmac_hits[:4]))
+            opp.why_matched.append("FOCUS:" + ", ".join(wexmac_hits[:4]))
 
         # Set-aside mentions (signals)
         if any(s.lower() in text_lower for s in [x.lower() for x in SETASIDE_KEYWORDS]):
@@ -1413,7 +1323,7 @@ def run() -> int:
 
     print(email_text)
 
-    subject = f"Weston Trolley / WEXMAC Daily Opportunities ({len(scored)} matches | {len(top)} high priority) — {now:%b %d, %Y}"
+    subject = f"Pest/Vector Management Daily Opportunities ({len(scored)} matches | {len(top)} high priority) — {now:%b %d, %Y}"
     attachments = [p for p in [xlsx_path, csv_path] if p]
     send_email(subject, email_text, html_body=email_html, attachments=attachments)
 

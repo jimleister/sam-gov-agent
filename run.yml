@@ -1,0 +1,40 @@
+name: Run SAM Gov Agent
+
+on:
+  schedule:
+    - cron: '30 10 * * *'  # 4:15 PM Nepal time / ~6:30 AM ET (after prior US business day + nightly refresh)
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests openpyxl
+
+      - name: Run script
+        env:
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
+          SEND_EMAIL: "1"
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python script.py
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sam-results
+          path: |
+            sam_results_weston_wexmac_*.csv
+            sam_results_weston_wexmac_*.xlsx
