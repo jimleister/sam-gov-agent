@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import os
 import sys
+import re
 import json
 import time
 import csv
@@ -453,9 +454,19 @@ NEGATIVE_FIT_TERMS = [
 ]
 
 
-# Email recipients (prefer env vars so you don't edit code)
-EMAIL_TO = os.getenv("REPORT_TO", "jleister@westontrolley.com")
-EMAIL_CC = os.getenv("REPORT_CC", "pgurung@westontrolley.com, manish@zenjatra.com")
+# Email recipients (prefer env vars so you don't edit code).
+# Accepts either REPORT_TO or EMAIL_TO (and REPORT_CC/EMAIL_CC) so it works
+# regardless of which secret name is configured. Note: a secret that is SET BUT
+# EMPTY returns "" from getenv (not the default), so blanks are coerced to the default.
+EMAIL_TO = (
+    (os.getenv("REPORT_TO") or "").strip()
+    or (os.getenv("EMAIL_TO") or "").strip()
+    or "jleister@westontrolley.com"
+)
+EMAIL_CC = (
+    (os.getenv("REPORT_CC") or "").strip()
+    or (os.getenv("EMAIL_CC") or "").strip()
+)
 EMAIL_SUBJECT_BASE = "SAM.gov Opportunities – last 72 hours (Feasibility Ranked)"
 
 TOP_MIN, TOP_MAX = 5, 10
@@ -1193,17 +1204,34 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
     """
 
 
+def _parse_addrs(raw: str) -> List[str]:
+    """Split a recipient string on commas/semicolons, strip, and drop blanks."""
+    if not raw:
+        return []
+    parts = re.split(r"[;,]", raw)
+    return [p.strip() for p in parts if p.strip()]
+
+
 def send_email(subject: str, body: str, html_body: Optional[str] = None, attachments: Optional[List[str]] = None) -> None:
     if not SEND_EMAIL:
         return
     if not SMTP_USER or not SMTP_PASS:
         raise RuntimeError("SEND_EMAIL=1 but SMTP_USER/SMTP_PASS not set.")
 
+    to_addrs = _parse_addrs(EMAIL_TO)
+    cc_addrs = _parse_addrs(EMAIL_CC)
+    all_recipients = to_addrs + cc_addrs
+    if not all_recipients:
+        raise RuntimeError(
+            "No valid email recipients. Set the REPORT_TO secret to one or more "
+            "comma-separated addresses (e.g. 'a@x.com, b@y.com'). REPORT_CC is optional."
+        )
+
     msg = EmailMessage()
     msg["From"] = FROM_EMAIL
-    msg["To"] = EMAIL_TO
-    if EMAIL_CC.strip():
-        msg["Cc"] = EMAIL_CC
+    msg["To"] = ", ".join(to_addrs)
+    if cc_addrs:
+        msg["Cc"] = ", ".join(cc_addrs)
     msg["Subject"] = subject
     msg.set_content(body)
     if html_body:
@@ -1221,7 +1249,7 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
         s.ehlo()
         s.starttls()
         s.login(SMTP_USER, SMTP_PASS)
-        s.send_message(msg)
+        s.send_message(msg, from_addr=FROM_EMAIL, to_addrs=all_recipients)
 
 
 # -----------------------------
