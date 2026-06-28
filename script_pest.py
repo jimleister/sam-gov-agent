@@ -5,15 +5,15 @@ SAM.gov Daily Scan (Get Opportunities Public API v2)
 Goals (dedicated Pest / Vector Management scanner)
 - Pull opportunities posted in the last 72 hours, Active only, for notice types:
   Sources Sought, Presolicitation, Solicitation, Combined Synopsis/Solicitation
-- Use OR-logic across structured “signal families” (state, NAICS, PSC):
+- Use OR-logic across structured "signal families" (state, NAICS, PSC):
   run multiple API searches -> union -> dedupe by noticeId
 - Match keywords LOCALLY (title + description). No API q= keyword searches.
 - Rank Top opportunities by a FEASIBILITY ratio derived from:
     Profitability (higher is better) vs (Complexity + Overhead) (lower is better)
   Relevance (number of matched signals) is a light tiebreaker.
-- Top 5–10 should be drawn from *all* matches (keywords/NAICS/PSC/state/org/etc),
-  with no “core keyword” gating/boosting.
-- Shortlist 10–20: next-best items (including state-only matches).
+- Top 5-10 should be drawn from *all* matches (keywords/NAICS/PSC/state/org/etc),
+  with no "core keyword" gating/boosting.
+- Shortlist 10-20: next-best items (including state-only matches).
 
 Email output
 - Writes ./email_draft.txt and prints to stdout.
@@ -117,8 +117,6 @@ KEYWORDS = [
 ]
 
 # PSC / classificationCode (signals)
-# V-codes generally represent transportation/travel-type services; J/W codes catch
-# maintenance/lease/rental-related opportunities that may support vehicle fleet work.
 PSCS = [
     # Transportation / travel / relocation / vehicle operations
     "V003", "V112", "V119", "V122", "V129", "V212", "V222",
@@ -163,8 +161,6 @@ NAICS = [
 ]
 
 # Organization codes as LOCAL signals (prefix match on fullParentPathCode)
-# Kept broad because pest/vector opportunities may come from installations/base
-# support, VA medical campuses, parks/forestry, public health, and municipal agencies.
 ORG_CODES = {
     "DOT": "069",
     "VA": "036",
@@ -176,8 +172,6 @@ ORG_CODES = {
 }
 
 # Place of performance: US states/territories (signals)
-# Preserves the existing script regions and adds the previously discussed upper-midwest /
-# mountain states, plus the tier 3 home-region states (MD, TN, WV, KY, DC, GA).
 POP_STATES = sorted(set([
     "NC", "SC", "VA", "CO", "PA", "PR", "GU",
     "MN", "ND", "SD", "WI",
@@ -185,8 +179,6 @@ POP_STATES = sorted(set([
 ]))
 
 # International PoP targets (signals)
-# South Asia, South America, Central America, and Caribbean coverage. Country names
-# are matched locally in title/description/agency text after structured searches return.
 POP_COUNTRIES = sorted(set([
     # South Asia
     "Afghanistan", "Bangladesh", "Bhutan", "India", "Maldives",
@@ -212,8 +204,7 @@ POP_COUNTRIES = sorted(set([
     "U.S. Virgin Islands", "US Virgin Islands", "Virgin Islands",
 ]))
 
-# Set-aside signals inferred locally from title/description. Weston qualifies for
-# Veteran-Owned Small Business and Small Business set-asides.
+# Set-aside signals inferred locally from title/description.
 SETASIDE_KEYWORDS = [
     "VOSB", "Veteran-Owned", "Veteran Owned", "Veteran-Owned Small Business",
     "Veteran Owned Small Business", "SDVOSB", "Service-Disabled",
@@ -244,9 +235,7 @@ FOCUS_TERMS = [
 # Backwards-compatible alias so any remaining references keep working.
 WEXMAC_FOCUS_TERMS = FOCUS_TERMS
 
-# Pest/Vector scoring families. Primary weight goes to structural/general pest control
-# and public-health vector control; secondary weight to vegetation/weed control and the
-# grounds/sanitation/environmental work these tasks are commonly bundled with.
+# Pest/Vector scoring families.
 DOMAIN_FAMILIES = {
     "Structural and general pest control": {
         "weight": 28,
@@ -328,34 +317,40 @@ SETASIDE_BOOST_TERMS = {
     "Small business": ["small business", "total small business", "small business set-aside", "sbsa", "set-aside", "set aside"],
 }
 
-# SAM.gov structured set-aside codes (typeOfSetAside). These are authoritative —
-# preferred over text scanning. SDVOSB is the priority target for Weston.
+# SAM.gov structured set-aside codes (typeOfSetAside).
 SDVOSB_SETASIDE_CODES = {"SDVOSBC", "SDVOSBS"}   # SDVOSB set-aside, SDVOSB sole source
 VOSB_SETASIDE_CODES = {"VSA", "VSS"}             # VOSB set-aside, VOSB sole source
 SMALLBIZ_SETASIDE_CODES = {"SBA", "SBP"}         # Total Small Business set-aside / partial
 
-# Priority boost applied to the final score when an SDVOSB set-aside is detected,
-# so SDVOSB opportunities rank first while everything else still appears.
-SDVOSB_PRIORITY_BOOST = 60.0
-VOSB_PRIORITY_BOOST = 25.0
+# Priority boost applied to the final score when an SDVOSB set-aside is detected.
+# Lowered so geography (the home-region tiers below) outranks set-aside status —
+# an in-region notice should beat an out-of-region SDVOSB notice.
+SDVOSB_PRIORITY_BOOST = 15.0
+VOSB_PRIORITY_BOOST = 8.0
 
 # Dedicated pest/vector management focus: primary and secondary target NAICS codes.
-# A notice carrying the PRIMARY NAICS gets a strong top-ranking boost (like SDVOSB);
-# the SECONDARY NAICS gets a meaningful but smaller boost. These stack with the
-# SDVOSB and geo boosts, so an SDVOSB pest-control notice in NC ranks highest of all.
 PRIMARY_NAICS = {"561710"}   # Exterminating and Pest Control Services
 SECONDARY_NAICS = {"561730"} # Landscaping Services (incl. vegetation/vector control)
 PRIMARY_NAICS_BOOST = 55.0
 SECONDARY_NAICS_BOOST = 25.0
 
-# Tiered home-region boost (moderate, NC peak). Applied as a general score boost on
-# top of the existing geo scoring, based on place-of-performance / office state.
-# Highest matching tier wins (not additive across tiers).
+# Geo-dominant home-region tiers (NC peak). These are intentionally larger than the
+# SDVOSB boost so location is the primary ranking driver: an in-region notice outranks
+# an out-of-region SDVOSB notice. Highest matching tier wins (not additive).
 HOME_REGION_TIERS = {
-    18.0: {"NC"},                                    # Tier 1 — home base
-    12.0: {"SC", "VA"},                              # Tier 2 — adjacent core
-    6.0:  {"MD", "TN", "WV", "KY", "PA", "DC", "GA"},  # Tier 3 — broader region
+    30.0: {"NC"},                                    # Tier 1 — home base
+    20.0: {"SC", "VA"},                              # Tier 2 — adjacent core
+    10.0: {"MD", "TN", "WV", "KY", "PA", "DC", "GA"},  # Tier 3 — broader region
 }
+
+# Out-of-region penalty: any place-of-performance state NOT in the tiers above is
+# subtracted, so distant pest/vector notices (OR, MN, etc.) stay out of the top 10.
+# PR/GU/territories are exempt. NOTE: PRIMARY-NAICS (561710) notices are exempt from
+# this penalty in compute_score so they surface regardless of location; SECONDARY
+# (561730) and all others are penalized when out of region.
+OUT_OF_REGION_PENALTY = -30.0
+IN_REGION_STATES = {s for states in HOME_REGION_TIERS.values() for s in states}
+NO_PENALTY_STATES = {"PR", "GU", "VI", "AS", "MP"}  # OCONUS/territories — exempt from penalty
 
 NEGATIVE_FIT_TERMS = [
     "software development", "information technology", "it services", "cybersecurity",
@@ -366,9 +361,6 @@ NEGATIVE_FIT_TERMS = [
 
 
 # Email recipients (prefer env vars so you don't edit code).
-# Accepts either REPORT_TO or EMAIL_TO (and REPORT_CC/EMAIL_CC) so it works
-# regardless of which secret name is configured. Note: a secret that is SET BUT
-# EMPTY returns "" from getenv (not the default), so blanks are coerced to the default.
 EMAIL_TO = (
     (os.getenv("REPORT_TO") or "").strip()
     or (os.getenv("EMAIL_TO") or "").strip()
@@ -389,7 +381,6 @@ MAX_TOTAL_DEDUPED = 6000  # stop early once enough deduped candidates exist
 SLEEP_SECONDS = 0.12
 
 # Feasibility scoring weights
-# Score = (Profitability / (Complexity + Overhead)) * 10  +  0.15 * RelevanceSignals
 FEASIBILITY_MULT = 10.0
 RELEVANCE_WEIGHT = 0.15
 MAX_RELEVANCE = 10.0
@@ -611,29 +602,39 @@ def _buyer_scores(text: str) -> Tuple[int, List[str]]:
     return min(score, 18), evidence[:4]
 
 
-def home_region_boost(opp: Opportunity) -> Tuple[float, Optional[str]]:
+def home_region_boost(opp: Opportunity, exempt_from_penalty: bool = False) -> Tuple[float, Optional[str]]:
     """
-    Return the highest matching home-region tier boost and the state that triggered it.
-    Checks the office state first, then place-of-performance state text signals.
-    Highest tier wins (boosts are not stacked across tiers).
-    """
-    candidates = set()
-    if opp.office_state:
-        candidates.add(opp.office_state.strip().upper())
+    Return a geographic score adjustment and the state that drove it.
 
-    # Place-of-performance / description text signals (e.g. "NC", "North Carolina" abbrev).
+    In-region states get a tiered boost (NC peak). Out-of-region states get a flat
+    penalty so distant work doesn't crowd the top results — UNLESS exempt_from_penalty
+    is True (used for PRIMARY-NAICS pest-control notices, which should surface regardless
+    of location while still getting the in-region boost when applicable). OCONUS/territory
+    place-of-performance is left unpenalized. When there's no concrete office state, fall
+    back to text signals for a boost only — ambiguous text is never penalized.
+    """
+    state = opp.office_state.strip().upper() if opp.office_state else None
+
+    if state:
+        for boost, states in HOME_REGION_TIERS.items():
+            if state in states:
+                return boost, state
+        # Out of all tiers: penalize unless exempt (primary NAICS) or an exempt territory.
+        if exempt_from_penalty or state in NO_PENALTY_STATES:
+            return 0.0, state
+        return OUT_OF_REGION_PENALTY, state
+
+    # No office state: text-signal boost only (never penalize on ambiguity).
     blob = " ".join([
         opp.title or "",
         opp.description_text or "",
         " ".join(opp.why_matched or []),
     ]).upper()
-
     best_boost = 0.0
     best_state: Optional[str] = None
     for boost, states in HOME_REGION_TIERS.items():
         for st in states:
-            # office state match, or whitespace-delimited state token in text
-            if st in candidates or f" {st} " in f" {blob} " or f" {st}," in blob:
+            if f" {st} " in f" {blob} " or f" {st}," in blob:
                 if boost > best_boost:
                     best_boost = boost
                     best_state = st
@@ -681,12 +682,8 @@ def _setaside_score(text: str) -> Tuple[int, List[str]]:
 
 def estimate_ratings(opp: Opportunity) -> None:
     """
-    Broader Weston/WEXMAC fit model.
-
-    Instead of only rewarding trolley/shuttle words, this scores across the full WEXMAC
-    PWS scope: transportation, warehousing, base/life support, equipment/material
-    handling, lodging/catering, medical logistics, communications, force protection,
-    food/water/supplies, and international/contingency logistics.
+    Pest/vector fit model scoring across pest control, vector/public-health control,
+    rodent/wildlife, vegetation/weed, grounds/sanitation, environmental, and licensing.
     """
     text = f"{opp.title}\n{opp.type}\n{opp.baseType}\n{opp.fullParentPathName}\n{opp.description_text}".lower()
 
@@ -733,7 +730,7 @@ def estimate_ratings(opp: Opportunity) -> None:
     if buyer_score >= 12:
         profitability += 1
 
-    # Some WEXMAC families are inherently heavier to execute.
+    # Some families are inherently heavier to execute.
     heavy_families = {
         "Vector and public health control",
         "Rodent and wildlife management",
@@ -796,11 +793,9 @@ def estimate_ratings(opp: Opportunity) -> None:
 
 def compute_score(opp: Opportunity) -> float:
     """
-    Broad business-fit ranking.
-
-    New score is not just feasibility. It gives primary weight to Weston/WEXMAC domain fit,
-    then set-aside eligibility, buyer fit, geography, and feasibility. This avoids burying
-    broad logistics/life-support opportunities just because they are not trolley/shuttle jobs.
+    Pest/vector business-fit ranking. Primary weight to domain fit, then set-aside,
+    buyer fit, geography (tier boost / out-of-region penalty), feasibility, and the
+    primary/secondary NAICS boost.
     """
     c = float(opp.ratings.get("complexity", 3))
     o = float(opp.ratings.get("overhead", 3))
@@ -814,7 +809,7 @@ def compute_score(opp: Opportunity) -> float:
     geo_fit = float(opp.ratings.get("geo_fit", 0))
     rel = min(MAX_RELEVANCE, float(len(set(opp.why_matched))))
 
-    # SDVOSB priority boost: surface SDVOSB set-asides first, without excluding others.
+    # SDVOSB priority boost (modest; geography leads).
     setaside_class = opp.ratings.get("setaside_class")
     priority_boost = 0.0
     if setaside_class == "SDVOSB":
@@ -822,14 +817,8 @@ def compute_score(opp: Opportunity) -> float:
     elif setaside_class == "VOSB":
         priority_boost = VOSB_PRIORITY_BOOST
 
-    # Tiered home-region boost (stacks on top of existing geo_fit), NC peak.
-    region_boost, region_state = home_region_boost(opp)
-    if region_boost:
-        opp.ratings["home_region_boost"] = region_boost
-        opp.ratings["home_region_state"] = region_state
-
-    # Primary/secondary NAICS boost: a notice carrying 561710 (pest control) ranks at
-    # the top like an SDVOSB; 561730 (landscaping/vegetation) gets a strong secondary lift.
+    # Determine NAICS tier first, so geography can exempt PRIMARY (561710) from the
+    # out-of-region penalty while SECONDARY (561730) and everything else stay penalized.
     codes = set(opp.naicsCodes or [])
     naics_boost = 0.0
     naics_tier = None
@@ -842,6 +831,15 @@ def compute_score(opp: Opportunity) -> float:
     if naics_tier:
         opp.ratings["naics_tier"] = naics_tier
         opp.ratings["naics_boost"] = naics_boost
+
+    # Tiered home-region boost. PRIMARY-NAICS (561710) pest-control notices are exempt
+    # from the out-of-region penalty so they surface regardless of location; they still
+    # get the in-region boost when applicable. SECONDARY (561730) and all others are
+    # penalized when out of region.
+    region_boost, region_state = home_region_boost(opp, exempt_from_penalty=(naics_tier == "PRIMARY"))
+    if region_boost != 0.0:
+        opp.ratings["home_region_boost"] = region_boost
+        opp.ratings["home_region_state"] = region_state
 
     # 0-100ish scale. Domain fit dominates; feasibility still matters but is no longer the gatekeeper.
     return domain_fit + buyer_fit + setaside_fit + geo_fit + (feasibility * 12.0) + (rel * 0.75) + priority_boost + region_boost + naics_boost
