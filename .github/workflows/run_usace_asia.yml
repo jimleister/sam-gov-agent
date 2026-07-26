@@ -1,33 +1,40 @@
-SOURCES SOUGHT NOTICE
-THIS is a Sources Sought Notice ONLY.  The U.S. Government desires to procure a requirement for a Real Property Inspection/Inventory services contract at Fort Stewart, Georgia, with an anticipated start date of 01 December 2026, on a small business set-aside basis, provided two or more qualified small businesses respond to this source sought notice with information sufficient to support a set-aside.  Be advised that the U.S. Government will not be able to set aside this requirement if two or more small businesses do not respond with information to support the set-aside.  We encourage all small businesses, in all socioeconomic categories (including, 8(a) Business Development Program, Small Disadvantage Business, Historically Underutilized Business Zone, Service-Disabled Veteran-Owned, Women-Owned Small Business concerns), to identify their capabilities in meeting the requirement at a fair market price.
-This notice is issued solely for information and planning purposes – it does not constitute a Request for Quote (RFQ)/Invitation for Bid (IFB)/Request for Proposal (RFP) or a promise to issue an RFQ, IFB or RFP in the future.  This notice does not commit the U.S. Government to contract for any supply or service.  Further, the U.S. Government is not seeking quotes, bids or proposals at this time and will not accept unsolicited proposals in response to this sources sought notice.  The U.S. Government will not pay for any information or administrative costs incurred in response to this notice. Submittals will not be returned to the responder.  Not responding to this notice does not preclude participation in any future RFQ or IFB or RFP, if any is issued.  If a solicitation is released, it will be synopsized on the Governmentwide Point of Entry.  It is the responsibility of potential offerors to monitor the Governmentwide Point of Entry for additional information pertaining to this requirement.  The anticipated NAICS code is: 541350, Building Inspection Services, with the size standard of $12 million.
-A continuing need is anticipated for Real Property Inspection/Inventory services which was previously fulfilled under contract number W9124M-22-P-0004. This requirement will include a 12-month base period and four (4) 12-month option periods. Attached are the Performance Work Statement (PWS) and Performance Requirements Summary (PRS).
-In response to this sources sought, please provide:
-1. Name of the firm, point of contact, phone number, email address, UEI, CAGE code, a statement regarding small business status (including small business type(s)/certifications(s) such as SDB, 8(a), HUBZone, SDVOSB, WOSB, etc.) and the corresponding NAICS code.
-2. Identify whether your firm is interested in competing for this requirement as a prime contractor or not.  Identify subcontracting, joint ventures or teaming arrangement that will be pursued, if any.
-3. Information in sufficient detail regarding previous experience (indicate whether as a prime contractor or subcontractor) on similar requirements (including size, scope, complexity, timeframe, government or commercial), pertinent certifications, etc., that will facilitate making a capability determination. 
-4. Identify if the prime contractor will be able to meet the Limitations on Subcontracting in accordance with FAR Clause 52.219-14.
-5. Information to help determine if Real Property Inspection/Inventory services is commercially available, including pricing information, basis for pricing information (e.g., market pricing, catalog pricing), delivery schedules, customary terms and conditions, warranties, etc.
-6. Identify how the Army can best structure these contract requirements to facilitate competition by and among small business concerns.
-7. Identify any condition or action that may be having the effect of unnecessarily restricting competition with respect to this acquisition.  Please contact the MICC Advocate for Competition, Scott Kukes, at scott.d.kukes.civ@army.mil or (520) 944-7373, if you believe that this action is unreasonably restricting competition.  Include the subject of the acquisition, this announcement, and the MICC POC information from the SAM.Gov notice.  Provide the specific aspects that unreasonably restrict competition and the rationale for such conclusion.
-8. Recommendations to improve PWS/PRS to acquiring the Real Propert Inspection/Inventory services.
-Contact Information
-Primary Point of Contact
-Shaana Ito
-Email
-shaana.k.ito.civ@army.mil
-Phone Number
-5718014143
-Alternative Point of Contact
-Curtis Hanna
-Email
-curtis.r.hanna.civ@army.mil
-Phone Number
-(blank)
-Contracting Office Address
-KO DIRECTORATE OF CONTRACTIN
-976 WILLIAM H WILSON AVE BLDG 621
-FORT STEWART, GA 31314-3324 USA
-Attachments/Links
-Links
-No links have been added to this opportunity.
+name: Run SAM Gov Agent (USACE + S/SE Asia)
+
+on:
+  schedule:
+    - cron: '0 11 * * *'  # 6:00 AM ET, 15 min after pest run (10:45) and 30 min after logistics (10:30)
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests openpyxl
+
+      - name: Run USACE + S/SE Asia script
+        env:
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
+          SEND_EMAIL: "1"
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python script_usace_asia.py
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sam-results-usace-asia
+          path: |
+            sam_results_usace_asia_*.csv
+            sam_results_usace_asia_*.xlsx
