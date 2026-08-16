@@ -77,7 +77,7 @@ from email.message import EmailMessage
 SAM_SEARCH_URL = "https://api.sam.gov/prod/opportunities/v2/search"
 
 NOTICE_TYPES = ["r", "p", "o", "k"]  # Sources Sought, Presolicitation, Solicitation, Combined Synopsis/Solicitation
-POSTED_WINDOW_HOURS = 72
+POSTED_WINDOW_HOURS = 96 # 4 days
 ACTIVE_ONLY = True
 
 # -----------------------------
