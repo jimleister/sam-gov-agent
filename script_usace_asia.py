@@ -7,12 +7,20 @@ and script_pest.py (pest/vector management). This one narrows on geography and
 agency rather than on domain.
 
 Scope (hard filter — items outside are dropped, not just deprioritized):
-- Non-USACE opportunities: include only if place of performance is in South Asia
-  or Southeast Asia.
-- USACE-issued opportunities: include if place of performance is in South Asia,
-  Southeast Asia, the United States, or US territories (PR, GU, VI, AS, MP).
-- Everything else (USACE in Europe/Africa/Middle East/Latin America, non-USACE in
-  the US, etc.) is dropped from this scan. Those live in the other scanners.
+- Nepal carve-out: ANY opportunity with place of performance in Nepal is
+  included, regardless of issuing agency or domain. This is a standing
+  exception to the rules below.
+- USACE-issued opportunities: include only if place of performance is in South
+  Asia, Southeast Asia, the United States, or US territories (PR, GU, VI, AS,
+  MP) AND the notice text hits a quality control / quality assurance / quality
+  surveillance term (see the "Inspection and QA/QC" term list). USACE notices
+  with no QC/QS signal are dropped — this scanner is deliberately narrow on
+  USACE now, not a general USACE feed.
+- Non-USACE opportunities: include only if place of performance is in South
+  Asia or Southeast Asia. No domain restriction.
+- Everything else (USACE in Europe/Africa/Middle East/Latin America, non-USACE
+  in the US, USACE with no QC/QS signal, etc.) is dropped from this scan.
+  Those live in the other scanners.
 
 Ranking:
 - Domain families (WEXMAC-adjacent) score relevance but do NOT filter.
@@ -96,6 +104,13 @@ US_TERRITORIES = [
     "Puerto Rico", "US Virgin Islands", "U.S. Virgin Islands", "Virgin Islands",
     "Guam", "American Samoa", "Northern Mariana Islands", "Commonwealth of the Northern Mariana Islands",
 ]
+
+# Nepal gets a standing carve-out (see include_by_scope): ANY opportunity with
+# place of performance in Nepal is included, regardless of issuing agency or
+# domain match. This exists because Nepal candidate volume is thin and the
+# user wants full visibility there rather than having it filtered out by the
+# USACE QC/QS scope rule or by NAICS/PSC fan-out gaps.
+NEPAL_NAMES = ["Nepal"]
 
 # All countries considered "target region" for the geographic filter.
 TARGET_REGION_COUNTRIES = sorted(set(SOUTH_ASIA + SOUTHEAST_ASIA))
@@ -357,6 +372,14 @@ DOMAIN_FAMILIES = {
             "third-party inspection", "third party inspection",
             "independent inspection", "acceptance testing", "commissioning",
             "punch list inspection",
+            # Quality surveillance — government-side QA/surveillance of contractor
+            # performance (distinct from contractor CQC above, but the same family).
+            "quality surveillance", "surveillance plan", "surveillance schedule",
+            "quality assurance surveillance plan", "qasp",
+            "performance surveillance", "contract surveillance",
+            "government quality assurance", "gqa", "cor surveillance",
+            "quality assurance evaluator", "qae", "surveillance officer",
+            "cqar", "contractor performance assessment",
         ],
     },
     "Environmental and remediation": {
@@ -426,7 +449,7 @@ EMAIL_CC = (
     (os.getenv("REPORT_CC") or "").strip()
     or (os.getenv("EMAIL_CC") or "").strip()
 )
-EMAIL_SUBJECT_BASE = "SAM.gov USACE + South/Southeast Asia Opportunities"
+EMAIL_SUBJECT_BASE = "SAM.gov USACE (QC/QS) + South/Southeast Asia + Nepal Opportunities"
 
 TOP_MIN, TOP_MAX = 5, 10
 SHORTLIST_MIN, SHORTLIST_MAX = 10, 20
@@ -718,21 +741,50 @@ def classify_region(opp: Opportunity) -> Optional[str]:
     return None
 
 
+def is_nepal(opp: Opportunity) -> bool:
+    """
+    True if place of performance is Nepal. Checked via structured POP
+    code/name first, then falls back to text-scanning title/agency-path/
+    description (word-boundary match, so it won't false-positive on
+    substrings). Used for the standing Nepal carve-out in include_by_scope.
+    """
+    code = (opp.pop_country_code or "").strip().upper()
+    if code == "NP":
+        return True
+    if opp.pop_country_name and "nepal" in opp.pop_country_name.lower():
+        return True
+    blob = " ".join(filter(None, [opp.title, opp.fullParentPathName, opp.description_text])).lower()
+    return term_matches(blob, "nepal")
+
+
 def include_by_scope(opp: Opportunity) -> Tuple[bool, str]:
     """
-    Apply the hard geography/agency filter.
+    Apply the hard geography/agency/domain filter.
 
     Include when:
-      - USACE + POP in {south_asia, southeast_asia, us, us_territory}
-      - non-USACE + POP in {south_asia, southeast_asia}
+      - Place of performance is Nepal: ALWAYS include — any agency, any
+        domain. Standing carve-out (see NEPAL_NAMES above).
+      - USACE + POP in {south_asia, southeast_asia, us, us_territory} AND the
+        notice text (title/agency-path/description) hits a quality control /
+        quality assurance / quality surveillance term from the "Inspection
+        and QA/QC" family. USACE notices with no QC/QS signal are dropped.
+      - non-USACE + POP in {south_asia, southeast_asia}. No domain filter.
 
     Anything else is dropped. Returns (include?, reason).
     """
+    if is_nepal(opp):
+        return True, "Nepal — standing full-coverage carve-out (all agencies/domains)"
+
     region = opp.region_bucket
     if opp.is_usace:
-        if region in {"south_asia", "southeast_asia", "us", "us_territory"}:
-            return True, f"USACE ({region})"
-        return False, f"USACE outside covered geography (region={region or 'unknown'})"
+        if region not in {"south_asia", "southeast_asia", "us", "us_territory"}:
+            return False, f"USACE outside covered geography (region={region or 'unknown'})"
+        text = " ".join(filter(None, [opp.title, opp.fullParentPathName, opp.description_text])).lower()
+        qc_hits = _hits(text, DOMAIN_FAMILIES["Inspection and QA/QC"]["terms"])
+        if not qc_hits:
+            return False, "USACE dropped — no quality control / quality assurance / surveillance signal"
+        opp.keyword_hits = qc_hits[:10]
+        return True, f"USACE QC/QS match ({region}): {', '.join(qc_hits[:3])}"
     if region in {"south_asia", "southeast_asia"}:
         return True, f"Non-USACE in target region ({region})"
     return False, f"Non-USACE outside target Asia region (region={region or 'unknown'})"
@@ -1020,12 +1072,14 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append("")
     lines.append("Good morning,")
     lines.append("")
-    lines.append(f"Today's SAM.gov scan for USACE + South/Southeast Asia focus areas.")
+    lines.append(f"Today's SAM.gov scan for USACE (quality control/QA/surveillance only) + South/Southeast Asia + Nepal (all agencies).")
     lines.append(f"Search window: last ~{POSTED_WINDOW_HOURS} hours")
     lines.append(f"Total in scope: {stats.get('in_scope', 0)}")
-    lines.append(f"  USACE (any covered geography): {stats.get('usace', 0)}")
+    lines.append(f"  USACE, QC/QS match only (any covered geography): {stats.get('usace', 0)}")
     lines.append(f"  Non-USACE in South/SE Asia: {stats.get('asia_only', 0)}")
     lines.append(f"  USACE-in-Asia (sweet spot): {stats.get('usace_in_asia', 0)}")
+    lines.append(f"  Nepal (all agencies/domains, standing carve-out): {stats.get('nepal', 0)}")
+    lines.append(f"  USACE dropped for no QC/QS signal: {stats.get('usace_dropped_no_qc', 0)}")
     lines.append(f"Top opportunities: {len(top)}")
     lines.append(f"Next-best shortlist: {len(shortlist)}")
     lines.append("")
@@ -1044,6 +1098,8 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
                 tags.append(opp.usace_district)
         if opp.region_bucket:
             tags.append(opp.region_bucket.replace("_", " ").title())
+        if is_nepal(opp):
+            tags.append("Nepal")
         lines.append(f"   - Tags: {' | '.join(tags) if tags else '—'}")
         lines.append(f"   - Agency/Office: {opp.fullParentPathName or '—'}")
         lines.append(f"   - Location: {get_location_label(opp)}")
@@ -1082,6 +1138,8 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
             tags.append("USACE")
         if opp.region_bucket:
             tags.append(opp.region_bucket.replace("_", " ").title())
+        if is_nepal(opp):
+            tags.append("Nepal")
         tag_html = " ".join(
             f"<span style='background:#0B3D91;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-right:4px;'>{esc(t)}</span>"
             for t in tags
@@ -1121,15 +1179,16 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
     return f"""
     <html>
     <body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
-      <h2 style="margin-bottom:4px;">USACE + South/Southeast Asia Opportunities</h2>
+      <h2 style="margin-bottom:4px;">USACE (QC/QS) + South/Southeast Asia + Nepal Opportunities</h2>
       <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Search window: last ~{POSTED_WINDOW_HOURS} hours.</p>
 
       <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;">
         <tr>
           <td style="padding:8px 18px 8px 0;"><strong>In scope</strong><br>{stats.get('in_scope', 0)}</td>
-          <td style="padding:8px 18px 8px 0;"><strong>USACE (any covered)</strong><br>{stats.get('usace', 0)}</td>
+          <td style="padding:8px 18px 8px 0;"><strong>USACE (QC/QS only)</strong><br>{stats.get('usace', 0)}</td>
           <td style="padding:8px 18px 8px 0;"><strong>Non-USACE in Asia</strong><br>{stats.get('asia_only', 0)}</td>
           <td style="padding:8px 18px 8px 0;"><strong>USACE-in-Asia sweet spot</strong><br>{stats.get('usace_in_asia', 0)}</td>
+          <td style="padding:8px 18px 8px 0;"><strong>Nepal (all agencies)</strong><br>{stats.get('nepal', 0)}</td>
           <td style="padding:8px 18px 8px 0;"><strong>High priority</strong><br>{len(top)}</td>
         </tr>
       </table>
@@ -1167,6 +1226,7 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "is_usace": "Y" if opp.is_usace else "",
         "usace_district": opp.usace_district or "",
         "region_bucket": opp.region_bucket or "",
+        "is_nepal": "Y" if is_nepal(opp) else "",
         "pop_country": opp.pop_country_name or opp.pop_country_code or "",
         "pop_state": opp.pop_state_code or "",
         "pop_city": opp.pop_city_name or "",
@@ -1239,9 +1299,11 @@ def write_results_xlsx(scored: List[Opportunity], top_ids: set, shortlist_ids: s
     summary.append(["Metric", "Value"])
     summary.append(["Generated", as_of.strftime("%Y-%m-%d %H:%M")])
     summary.append(["Total in scope", stats.get("in_scope", 0)])
-    summary.append(["USACE (any covered geography)", stats.get("usace", 0)])
+    summary.append(["USACE (QC/QS match only, any covered geography)", stats.get("usace", 0)])
     summary.append(["Non-USACE in South/SE Asia", stats.get("asia_only", 0)])
     summary.append(["USACE-in-Asia (sweet spot)", stats.get("usace_in_asia", 0)])
+    summary.append(["Nepal (all agencies/domains, carve-out)", stats.get("nepal", 0)])
+    summary.append(["USACE dropped for no QC/QS signal", stats.get("usace_dropped_no_qc", 0)])
     summary.append(["Top opportunities", len(top_ids)])
     summary.append(["Shortlist opportunities", len(shortlist_ids)])
     summary.append(["Search window hours", POSTED_WINDOW_HOURS])
@@ -1328,6 +1390,15 @@ def run() -> int:
     for code in PSCS:
         jobs.append((f"psc:{code}", {**base, "ccode": code}))
 
+    # Unrestricted sweep — no NAICS/PSC/state filter. SAM.gov's search API has
+    # no place-of-performance-country parameter, so a notice posted with an
+    # unusual NAICS/PSC code (or POP in Nepal specifically) can otherwise slip
+    # through every fanned-out job above. This job exists mainly to guarantee
+    # full candidate coverage for the Nepal carve-out and for Asia POP notices
+    # generally; the geography/agency/domain filter downstream still applies
+    # to everything it turns up except Nepal.
+    jobs.append(("global-sweep", dict(base)))
+
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
@@ -1370,7 +1441,10 @@ def run() -> int:
             break
 
     scored: List[Opportunity] = []
-    stats = {"in_scope": 0, "usace": 0, "asia_only": 0, "usace_in_asia": 0, "dropped_out_of_scope": 0}
+    stats = {
+        "in_scope": 0, "usace": 0, "asia_only": 0, "usace_in_asia": 0,
+        "nepal": 0, "usace_dropped_no_qc": 0, "dropped_out_of_scope": 0,
+    }
 
     for opp in seen.values():
         if not hard_filters_ok(opp, today=today, due_max=due_max):
@@ -1385,6 +1459,8 @@ def run() -> int:
         keep, reason = include_by_scope(opp)
         if not keep:
             stats["dropped_out_of_scope"] += 1
+            if reason.startswith("USACE dropped"):
+                stats["usace_dropped_no_qc"] += 1
             continue
 
         add_structural_reasons(opp)
@@ -1401,6 +1477,8 @@ def run() -> int:
             stats["asia_only"] += 1
         if opp.is_usace and opp.region_bucket in {"south_asia", "southeast_asia"}:
             stats["usace_in_asia"] += 1
+        if is_nepal(opp):
+            stats["nepal"] += 1
 
     scored.sort(key=lambda x: x.score, reverse=True)
 
@@ -1428,8 +1506,8 @@ def run() -> int:
     print(email_text)
 
     subject = (
-        f"USACE + S/SE Asia Opportunities "
-        f"({stats['in_scope']} in scope | {stats['usace_in_asia']} sweet-spot) — {now:%b %d, %Y}"
+        f"USACE (QC/QS) + S/SE Asia + Nepal Opportunities "
+        f"({stats['in_scope']} in scope | {stats['usace_in_asia']} sweet-spot | {stats['nepal']} Nepal) — {now:%b %d, %Y}"
     )
     attachments = [p for p in [xlsx_path, csv_path] if p]
     send_email(subject, email_text, html_body=email_html, attachments=attachments)
@@ -1437,8 +1515,9 @@ def run() -> int:
     print(f"[INFO] Wrote spreadsheet files: {', '.join(attachments)}", file=sys.stderr)
     print(
         f"\n[INFO] API calls: {total_calls} | Deduped candidates: {len(seen)} | "
-        f"In scope: {stats['in_scope']} | USACE: {stats['usace']} | Asia-only: {stats['asia_only']} | "
-        f"Sweet spot: {stats['usace_in_asia']} | Dropped: {stats['dropped_out_of_scope']} | "
+        f"In scope: {stats['in_scope']} | USACE (QC/QS): {stats['usace']} | Asia-only: {stats['asia_only']} | "
+        f"Sweet spot: {stats['usace_in_asia']} | Nepal: {stats['nepal']} | "
+        f"USACE dropped (no QC/QS): {stats['usace_dropped_no_qc']} | Dropped: {stats['dropped_out_of_scope']} | "
         f"Top: {len(top)} | Shortlist: {len(shortlist)} | SEND_EMAIL={int(SEND_EMAIL)}",
         file=sys.stderr,
     )
