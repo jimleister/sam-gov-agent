@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "notice_id",
+    "agent",
+    "overall_fit",
+    "worth_time",
+    "pursuit_posture",
+    "agent_was_right"
+  ],
+  "properties": {
+    "notice_id": {
+      "type": "string"
+    },
+    "agent": {
+      "enum": [
+        "open-strix",
+        "hermes",
+        "python-baseline"
+      ]
+    },
+    "overall_fit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "worth_time": {
+      "enum": [
+        "Yes",
+        "Maybe",
+        "No"
+      ]
+    },
+    "pursuit_posture": {
+      "enum": [
+        "Prime",
+        "Team",
+        "Subcontract",
+        "Monitor",
+        "Pass"
+      ]
+    },
+    "agent_was_right": {
+      "enum": [
+        "Yes",
+        "Partly",
+        "No"
+      ]
+    },
+    "note": {
+      "type": "string"
+    },
+    "teach_agent": {
+      "type": "boolean"
+    },
+    "outcome": {
+      "enum": [
+        "Pursued",
+        "Bid",
+        "Partnered",
+        "Won",
+        "Lost",
+        "No-bid",
+        "Pending"
+      ]
+    },
+    "rated_at": {
+      "type": "string"
+    }
+  }
+}
