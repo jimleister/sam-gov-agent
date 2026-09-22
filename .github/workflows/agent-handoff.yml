@@ -1,0 +1,39 @@
+name: Build agent handoff
+
+on:
+  workflow_run:
+    workflows: ["Run SAM Gov Agent"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  handoff:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download latest SAM results artifact
+        uses: dawidd6/action-download-artifact@v11
+        with:
+          workflow: run.yml
+          workflow_conclusion: success
+          name: sam-results
+          path: source-results
+
+      - name: Copy CSV to workspace
+        run: cp source-results/sam_results_weston_wexmac_*.csv .
+
+      - name: Build common JSON handoff
+        run: python scripts/export_agent_handoff.py
+
+      - name: Upload common handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-handoff
+          path: agent_handoff/*.json
+          retention-days: 30
