@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
+from sam_common import sam_search_with_retry
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -132,7 +133,7 @@ PSCS = [
     "W023", "W025", "W039", "W099", "J023", "J025", "J039", "J099",
 
     # Facilities/base support and food/water/life support
-    "M1LZ", "S201", "S203", "S211", "S222", "S299", "S203",
+    "M1LZ", "S201", "S203", "S211", "S222", "S299",
 ]
 
 # NAICS (signals) — Pest / Vector Management universe
@@ -474,12 +475,7 @@ def parse_iso_date(iso_dt: str) -> Optional[dt.datetime]:
 
 
 def sam_search(api_key: str, params: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
-    q = dict(params)
-    q["api_key"] = api_key
-    r = requests.get(SAM_SEARCH_URL, params=q, timeout=timeout)
-    if r.status_code != 200:
-        raise RuntimeError(f"SAM API error {r.status_code}: {r.text[:800]}")
-    return r.json()
+    return sam_search_with_retry(SAM_SEARCH_URL, api_key, params, timeout=timeout)
 
 
 def sam_fetch_description(desc_url: str, timeout: int = 60) -> str:
@@ -1269,7 +1265,11 @@ def run() -> int:
         while True:
             p = dict(params)
             p["offset"] = offset
-            data = sam_search(api_key, p)
+            try:
+                data = sam_search(api_key, p)
+            except Exception as e:
+                print(f"[WARN] Job {job_name} failed at offset {offset}: {e}", file=sys.stderr)
+                break
             total_calls += 1
 
             items = data.get("opportunitiesData") or []
