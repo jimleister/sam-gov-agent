@@ -5,9 +5,17 @@ on:
     - cron: '0 11 * * *'  # 6:00 AM ET, 15 min after pest run (10:45) and 30 min after logistics (10:30)
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repo
@@ -17,9 +25,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        run: pip install requests openpyxl
+        run: python -m pip install -r requirements.txt
 
       - name: Run USACE + S/SE Asia script
         env:
@@ -34,7 +44,11 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: sam-results-usace-asia
+          retention-days: 30
+          if-no-files-found: warn
+          name: sam-results-usace-asia-${{ github.run_number }}
           path: |
             sam_results_usace_asia_*.csv
             sam_results_usace_asia_*.xlsx
+            email_draft.txt
+            email_draft.html
