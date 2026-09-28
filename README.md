@@ -22,6 +22,8 @@ Runs are independent and may overlap. Each has a 60-minute job timeout. Runtime 
 
 Reports mark an opportunity due within 72 hours with ❗. This is based on the response deadline, not whether the notice is newly discovered. Historical NEW/UPDATED/SEEN BEFORE tracking is a separate future step.
 
+The Catholic Southeast / Full NC report searches up to one year of NC postings with open response deadlines, in addition to the recent-state and global searches. It saves in-scope notices as a separate GitHub Actions artifact and restores the latest state from the main branch on the next run. A saved notice stays in the report until its exact response deadline passes. Results carried from state without a fresh API hit are tagged `signal:carried-forward; verify SAM.gov status`; check these for cancellations or amendments. The first run after this change backfills NC notices from the API; a notice posted more than one year before that first run cannot be discovered by the API's one-year posted-date range unless it was already saved. If a run cannot finish a query, it fails rather than emailing a partial report.
+
 ## Development validation
 
 Run `python -m pip install -r requirements.txt`, then `python -m unittest -v test_sam_common.py test_scanners.py`. The scanner smoke test uses mocked SAM.gov responses and disables email.
