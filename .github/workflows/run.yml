@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -31,6 +32,18 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Restore logistics opportunity state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=logistics-opportunity-state&per_page=10" --jq '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main")) | sort_by(.created_at) | reverse | .[0].id // empty')
+          if [ -n "$artifact_id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > opportunity-state.zip
+            unzip -oq opportunity-state.zip logistics_opportunity_state.json
+          else
+            python bootstrap_opportunity_state.py run.yml sam-results- logistics_opportunity_state.json
+          fi
+
       - name: Run script
         env:
           SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
@@ -53,3 +66,12 @@ jobs:
             email_draft.txt
             email_draft.html
             runtime_metrics.json
+
+      - name: Save logistics opportunity state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 30
+          if-no-files-found: warn
+          name: logistics-opportunity-state
+          path: logistics_opportunity_state.json
