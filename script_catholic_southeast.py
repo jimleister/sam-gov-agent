@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import sam_search_with_retry
+from sam_common import sam_search_with_retry, deadline_urgency_flag
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -772,7 +772,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     if not top:
         lines.append("No top opportunities found for this run.")
     for i, opp in enumerate(top, 1):
-        lines.append(f"{i}) {opp.title}")
+        lines.append(f"{i}) {deadline_urgency_flag(opp.responseDeadLine, as_of)} {opp.title}".replace(")  ", ") "))
         lines.append(f"   - Score: {opp.score:.1f} | Feasibility: {opp.feasibility:.2f}")
         tags: List[str] = []
         if opp.is_nc:
@@ -799,7 +799,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     for opp in shortlist:
         tag = "NC" if opp.is_nc else "Catholic"
         lines.append(
-            f"- [{tag}] {opp.title} | Score {opp.score:.1f} | {get_location_label(opp)} | "
+            f"- {deadline_urgency_flag(opp.responseDeadLine, as_of)} [{tag}] {opp.title} | Score {opp.score:.1f} | {get_location_label(opp)} | "
             f"{get_setaside_label(opp)} | Due {opp.responseDeadLine or '—'}"
         )
         lines.append(f"  {opp.uiLink}")
@@ -829,7 +829,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
         <tr>
           <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{i}</td>
           <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">
-            <div style="font-weight:700;font-size:14px;">{esc(opp.title)}</div>
+            <div style="font-weight:700;font-size:14px;">{esc((deadline_urgency_flag(opp.responseDeadLine, as_of) + " " + opp.title).strip())}</div>
             <div style="margin-top:4px;">{tag_html}</div>
             <div style="margin-top:4px;"><a href="{esc(opp.uiLink)}">Open in SAM.gov</a></div>
             <div style="margin-top:6px;color:#444;"><strong>Why it matters:</strong> {esc(get_match_summary(opp))}</div>
@@ -918,6 +918,7 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "notice_type": opp.type,
         "posted_date": opp.postedDate,
         "response_deadline": opp.responseDeadLine,
+        "deadline_flag": deadline_urgency_flag(opp.responseDeadLine),
         "agency_office": opp.fullParentPathName,
         "naics": ", ".join(opp.naicsCodes or []),
         "psc": opp.classificationCode or "",
@@ -1042,6 +1043,7 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 # MAIN
 # -----------------------------
 def run() -> int:
+    run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
 
     now = dt.datetime.now()
@@ -1072,8 +1074,10 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
+    job_durations: Dict[str, float] = {}
 
     for job_name, params in jobs:
+        job_started = time.monotonic()
         offset = 0
         while True:
             p = dict(params)
@@ -1106,6 +1110,8 @@ def run() -> int:
             if len(seen) >= MAX_TOTAL_DEDUPED:
                 break
             time.sleep(SLEEP_SECONDS)
+
+        job_durations[job_name] = round(time.monotonic() - job_started, 3)
 
         if len(seen) >= MAX_TOTAL_DEDUPED:
             break
@@ -1164,6 +1170,28 @@ def run() -> int:
         f.write(email_html)
 
     print(email_text)
+
+    elapsed_seconds = round(time.monotonic() - run_started, 3)
+    runtime_metrics = {
+        "scanner": "script_catholic_southeast.py",
+        "threshold_minutes": 60,
+        "query_and_report_seconds": elapsed_seconds,
+        "query_and_report_minutes": round(elapsed_seconds / 60.0, 2),
+        "threshold_percent": round((elapsed_seconds / 3600.0) * 100.0, 1),
+        "within_60_minute_threshold": elapsed_seconds < 3600,
+        "near_threshold_90pct": elapsed_seconds >= 3240,
+        "api_calls": total_calls,
+        "deduped_candidates": len(seen),
+        "query_durations_seconds": job_durations,
+        "query_result_counts": job_counts,
+    }
+    with open("runtime_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(runtime_metrics, f, indent=2, sort_keys=True)
+    print(
+        f"[RUNTIME] {runtime_metrics['query_and_report_minutes']} min "
+        f"({runtime_metrics['threshold_percent']}% of 60-min threshold)",
+        file=sys.stderr,
+    )
 
     subject = (
         f"Catholic (VA/GA/SC/KY/WV/DC) + Full NC Opportunities "
