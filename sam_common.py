@@ -95,38 +95,29 @@ def deadline_urgency_flag(deadline: Any, as_of: Any = None, urgent_days: int = 3
 
 
 def write_runtime_metrics(
-    job_elapsed_seconds: Dict[str, float],
-    job_result_counts: Dict[str, int],
+    scanner: str,
+    queries: list[Dict[str, Any]],
     total_elapsed_seconds: float,
+    api_calls: int,
     *,
     timeout_minutes: int = 60,
     path: str = "runtime_metrics.json",
 ) -> str:
-    """Write per-query and total runtime telemetry for later historical analysis."""
+    """Write consistent per-query and total runtime telemetry."""
     import json
+    from datetime import datetime, timezone
 
     threshold_seconds = timeout_minutes * 60
-    jobs = []
-    for name in sorted(job_elapsed_seconds):
-        elapsed = round(float(job_elapsed_seconds[name]), 3)
-        jobs.append(
-            {
-                "query": name,
-                "elapsed_seconds": elapsed,
-                "result_count": int(job_result_counts.get(name, 0)),
-                "threshold_pct": round((elapsed / threshold_seconds) * 100, 2),
-                "near_timeout": elapsed >= threshold_seconds * 0.8,
-            }
-        )
-
     payload = {
+        "scanner": scanner,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "timeout_minutes": timeout_minutes,
         "total_elapsed_seconds": round(float(total_elapsed_seconds), 3),
-        "total_threshold_pct": round(
-            (float(total_elapsed_seconds) / threshold_seconds) * 100, 2
-        ),
-        "near_timeout": float(total_elapsed_seconds) >= threshold_seconds * 0.8,
-        "jobs": jobs,
+        "total_threshold_pct": round(float(total_elapsed_seconds) / threshold_seconds * 100, 2),
+        "near_timeout": float(total_elapsed_seconds) >= 50 * 60,
+        "timeout_threshold_reached": float(total_elapsed_seconds) >= threshold_seconds,
+        "api_calls": int(api_calls),
+        "queries": queries,
     }
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)

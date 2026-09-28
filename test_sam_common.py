@@ -1,9 +1,12 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import requests
 
-from sam_common import deadline_urgency_flag, sam_search_with_retry, deadline_urgency_flag
+from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
 
 
 class SamCommonTests(unittest.TestCase):
@@ -69,6 +72,16 @@ class SamCommonTests(unittest.TestCase):
             deadline_urgency_flag("2026-10-05T12:00:00Z", now),
             "",
         )
+
+    def test_runtime_metrics_include_query_counts_and_thresholds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "runtime_metrics.json")
+            write_runtime_metrics("scanner.py", [{"query": "state:NC", "seconds": 20.0, "api_calls": 2, "items_returned": 4}], 3000, 2, path=path)
+            data = json.loads(Path(path).read_text())
+        self.assertEqual(data["scanner"], "scanner.py")
+        self.assertEqual(data["queries"][0]["items_returned"], 4)
+        self.assertTrue(data["near_timeout"])
+        self.assertFalse(data["timeout_threshold_reached"])
 
 
 if __name__ == "__main__":

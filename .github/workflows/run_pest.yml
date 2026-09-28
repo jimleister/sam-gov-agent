@@ -1,4 +1,4 @@
-name: Run SAM Gov Agent (Pest/Vector)
+name: SAM.gov — Pest / Vector
 
 on:
   schedule:

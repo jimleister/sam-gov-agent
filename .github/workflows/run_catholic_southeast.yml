@@ -1,4 +1,4 @@
-name: Run SAM Gov Agent (Catholic VA/GA/SC/KY/WV/DC + Full NC)
+name: SAM.gov — Catholic Southeast / Full North Carolina
 
 on:
   schedule:

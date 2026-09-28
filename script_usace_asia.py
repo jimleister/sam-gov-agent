@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import deadline_urgency_flag, sam_search_with_retry
+from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -1365,7 +1365,6 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 def run() -> int:
     run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
-    run_started = time.monotonic()
 
     now = dt.datetime.now()
     today = now.date()
@@ -1403,8 +1402,7 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
-    job_elapsed_seconds: Dict[str, float] = {}
-    job_durations: Dict[str, float] = {}
+
     query_timings: List[Dict[str, Any]] = []
 
     for job_name, params in jobs:
@@ -1537,32 +1535,11 @@ def run() -> int:
     for k in sorted(job_counts, key=lambda x: (-job_counts[x], x))[:20]:
         print(f"[JOB] {k}: {job_counts[k]}", file=sys.stderr)
 
-    elapsed_seconds = round(time.monotonic() - run_started, 3)
-    runtime_metrics = {
-        "scanner": "script_usace_asia.py",
-        "generated_at": now.isoformat(),
-        "timeout_minutes": 60,
-        "near_timeout_minutes": 50,
-        "elapsed_seconds": elapsed_seconds,
-        "elapsed_minutes": round(elapsed_seconds / 60.0, 3),
-        "near_timeout": elapsed_seconds >= 50 * 60,
-        "timeout_threshold_reached": elapsed_seconds >= 60 * 60,
-        "api_calls": total_calls,
-        "queries": query_timings,
-    }
-    with open("runtime_metrics.json", "w", encoding="utf-8") as f:
-        json.dump(runtime_metrics, f, indent=2)
-    print(
-        f"[RUNTIME] {runtime_metrics['elapsed_minutes']:.2f} min | "
-        f"near 60-min timeout: {runtime_metrics['near_timeout']}",
-        file=sys.stderr,
-    )
-
     metrics_path = write_runtime_metrics(
-        job_elapsed_seconds,
-        job_counts,
+        "script_usace_asia.py",
+        query_timings,
         time.monotonic() - run_started,
-        timeout_minutes=60,
+        total_calls,
     )
     print(f"[INFO] Wrote runtime telemetry: {metrics_path}", file=sys.stderr)
 

@@ -1,4 +1,4 @@
-name: Run SAM Gov Agent (Inspection + Oil & Gas)
+name: SAM.gov — Inspection / Oil and Gas
 
 on:
   schedule:

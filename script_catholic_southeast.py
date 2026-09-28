@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics, deadline_urgency_flag
+from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -1046,7 +1046,6 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 def run() -> int:
     run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
-    run_started = time.monotonic()
 
     now = dt.datetime.now()
     today = now.date()
@@ -1076,11 +1075,11 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
-    job_elapsed_seconds: Dict[str, float] = {}
-    job_durations: Dict[str, float] = {}
+    query_timings: List[Dict[str, Any]] = []
 
     for job_name, params in jobs:
         job_started = time.monotonic()
+        calls_before = total_calls
         offset = 0
         while True:
             p = dict(params)
@@ -1113,8 +1112,6 @@ def run() -> int:
             if len(seen) >= MAX_TOTAL_DEDUPED:
                 break
             time.sleep(SLEEP_SECONDS)
-
-        job_durations[job_name] = round(time.monotonic() - job_started, 3)
 
         query_timings.append({
             "query": job_name,
@@ -1181,28 +1178,6 @@ def run() -> int:
 
     print(email_text)
 
-    elapsed_seconds = round(time.monotonic() - run_started, 3)
-    runtime_metrics = {
-        "scanner": "script_catholic_southeast.py",
-        "threshold_minutes": 60,
-        "query_and_report_seconds": elapsed_seconds,
-        "query_and_report_minutes": round(elapsed_seconds / 60.0, 2),
-        "threshold_percent": round((elapsed_seconds / 3600.0) * 100.0, 1),
-        "within_60_minute_threshold": elapsed_seconds < 3600,
-        "near_threshold_90pct": elapsed_seconds >= 3240,
-        "api_calls": total_calls,
-        "deduped_candidates": len(seen),
-        "query_durations_seconds": job_durations,
-        "query_result_counts": job_counts,
-    }
-    with open("runtime_metrics.json", "w", encoding="utf-8") as f:
-        json.dump(runtime_metrics, f, indent=2, sort_keys=True)
-    print(
-        f"[RUNTIME] {runtime_metrics['query_and_report_minutes']} min "
-        f"({runtime_metrics['threshold_percent']}% of 60-min threshold)",
-        file=sys.stderr,
-    )
-
     subject = (
         f"Catholic (VA/GA/SC/KY/WV/DC) + Full NC Opportunities "
         f"({stats['in_scope']} in scope | {stats['nc_total']} NC | {stats['catholic_match']} Catholic) — {now:%b %d, %Y}"
@@ -1221,11 +1196,12 @@ def run() -> int:
     for k in sorted(job_counts, key=lambda x: (-job_counts[x], x))[:20]:
         print(f"[JOB] {k}: {job_counts[k]}", file=sys.stderr)
 
+
     metrics_path = write_runtime_metrics(
-        job_elapsed_seconds,
-        job_counts,
+        "script_catholic_southeast.py",
+        query_timings,
         time.monotonic() - run_started,
-        timeout_minutes=60,
+        total_calls,
     )
     print(f"[INFO] Wrote runtime telemetry: {metrics_path}", file=sys.stderr)
 

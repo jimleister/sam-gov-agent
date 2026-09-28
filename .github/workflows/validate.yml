@@ -28,7 +28,7 @@ jobs:
 
       - name: Compile all scanners
         run: |
-          python -m py_compile             sam_common.py             script.py             script_pest.py             script_usace_asia.py             script_inspection_oilgas.py             script_catholic_southeast.py
+          python -m py_compile sam_common.py script.py script_pest.py script_usace_asia.py script_inspection_oilgas.py script_catholic_southeast.py
 
       - name: Run offline tests
-        run: python -m unittest -v test_sam_common.py
+        run: python -m unittest -v test_sam_common.py test_scanners.py

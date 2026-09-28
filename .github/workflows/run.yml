@@ -1,4 +1,4 @@
-name: Run SAM Gov Agent
+name: SAM.gov — Logistics / WEXMAC
 
 on:
   schedule:

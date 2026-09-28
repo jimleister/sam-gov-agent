@@ -1,4 +1,4 @@
-name: Run SAM Gov Agent (USACE + S/SE Asia)
+name: SAM.gov — USACE / South and Southeast Asia
 
 on:
   schedule:
