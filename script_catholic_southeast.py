@@ -1116,6 +1116,13 @@ def run() -> int:
 
         job_durations[job_name] = round(time.monotonic() - job_started, 3)
 
+        query_timings.append({
+            "query": job_name,
+            "seconds": round(time.monotonic() - job_started, 3),
+            "api_calls": total_calls - calls_before,
+            "items_returned": job_counts.get(job_name, 0),
+        })
+
         if len(seen) >= MAX_TOTAL_DEDUPED:
             break
 
