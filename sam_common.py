@@ -92,3 +92,43 @@ def deadline_urgency_flag(deadline: Any, as_of: Any = None, urgent_days: int = 3
 
     seconds_left = (due.astimezone(timezone.utc) - now).total_seconds()
     return "❗" if 0 <= seconds_left <= urgent_days * 86400 else ""
+
+
+def write_runtime_metrics(
+    job_elapsed_seconds: Dict[str, float],
+    job_result_counts: Dict[str, int],
+    total_elapsed_seconds: float,
+    *,
+    timeout_minutes: int = 60,
+    path: str = "runtime_metrics.json",
+) -> str:
+    """Write per-query and total runtime telemetry for later historical analysis."""
+    import json
+
+    threshold_seconds = timeout_minutes * 60
+    jobs = []
+    for name in sorted(job_elapsed_seconds):
+        elapsed = round(float(job_elapsed_seconds[name]), 3)
+        jobs.append(
+            {
+                "query": name,
+                "elapsed_seconds": elapsed,
+                "result_count": int(job_result_counts.get(name, 0)),
+                "threshold_pct": round((elapsed / threshold_seconds) * 100, 2),
+                "near_timeout": elapsed >= threshold_seconds * 0.8,
+            }
+        )
+
+    payload = {
+        "timeout_minutes": timeout_minutes,
+        "total_elapsed_seconds": round(float(total_elapsed_seconds), 3),
+        "total_threshold_pct": round(
+            (float(total_elapsed_seconds) / threshold_seconds) * 100, 2
+        ),
+        "near_timeout": float(total_elapsed_seconds) >= threshold_seconds * 0.8,
+        "jobs": jobs,
+    }
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+    return path
