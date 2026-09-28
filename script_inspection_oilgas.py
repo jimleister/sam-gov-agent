@@ -1215,6 +1215,7 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
+    job_durations: Dict[str, float] = {}
     query_timings: List[Dict[str, Any]] = []
 
     for job_name, params in jobs:
