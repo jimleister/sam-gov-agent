@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import sam_search_with_retry, deadline_urgency_flag
+from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics, deadline_urgency_flag
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -918,6 +918,7 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "notice_type": opp.type,
         "posted_date": opp.postedDate,
         "response_deadline": opp.responseDeadLine,
+        "urgency_flag": deadline_urgency_flag(opp.responseDeadLine),
         "deadline_flag": deadline_urgency_flag(opp.responseDeadLine),
         "agency_office": opp.fullParentPathName,
         "naics": ", ".join(opp.naicsCodes or []),
@@ -1045,6 +1046,7 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 def run() -> int:
     run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
+    run_started = time.monotonic()
 
     now = dt.datetime.now()
     today = now.date()
@@ -1074,6 +1076,7 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
+    job_elapsed_seconds: Dict[str, float] = {}
     job_durations: Dict[str, float] = {}
 
     for job_name, params in jobs:
@@ -1210,6 +1213,14 @@ def run() -> int:
     )
     for k in sorted(job_counts, key=lambda x: (-job_counts[x], x))[:20]:
         print(f"[JOB] {k}: {job_counts[k]}", file=sys.stderr)
+
+    metrics_path = write_runtime_metrics(
+        job_elapsed_seconds,
+        job_counts,
+        time.monotonic() - run_started,
+        timeout_minutes=60,
+    )
+    print(f"[INFO] Wrote runtime telemetry: {metrics_path}", file=sys.stderr)
 
     return 0
 
