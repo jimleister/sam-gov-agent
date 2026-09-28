@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
+from sam_common import sam_search_with_retry
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -365,12 +366,7 @@ def parse_iso_date(iso_dt: str) -> Optional[dt.datetime]:
 
 
 def sam_search(api_key: str, params: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
-    q = dict(params)
-    q["api_key"] = api_key
-    r = requests.get(SAM_SEARCH_URL, params=q, timeout=timeout)
-    if r.status_code != 200:
-        raise RuntimeError(f"SAM API error {r.status_code}: {r.text[:800]}")
-    return r.json()
+    return sam_search_with_retry(SAM_SEARCH_URL, api_key, params, timeout=timeout)
 
 
 def sam_fetch_description(desc_url: str, timeout: int = 60) -> str:
