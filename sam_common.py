@@ -1,11 +1,100 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+import json
+from dataclasses import asdict
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, Tuple
 
 import requests
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def load_opportunity_state(path: Path, opportunity_type: type) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("version") != 1 or not isinstance(data.get("opportunities"), list):
+        raise ValueError(f"Invalid opportunity state: {path}")
+    return {o.noticeId: o for raw in data["opportunities"]
+            for o in [opportunity_type(**raw)] if o.noticeId}
+
+
+def save_opportunity_state(path: Path, opportunities: list[Any]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"version": 1,
+                                     "opportunities": [asdict(o) for o in opportunities]},
+                                    ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def response_deadline_open(deadline: Any, now: datetime) -> bool:
+    if not deadline:
+        return True
+    try:
+        due = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise ValueError(f"Unparseable response deadline: {deadline}")
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    return due.astimezone(timezone.utc) > now.astimezone(timezone.utc)
+
+
+def refresh_saved_opportunities(
+    api_key: str,
+    saved: Dict[str, Any],
+    today: date,
+    search: Callable[[str, Dict[str, Any]], Dict[str, Any]],
+    normalize: Callable[[Dict[str, Any]], Any],
+) -> Tuple[Dict[str, Any], list[Dict[str, Any]], int]:
+    """Refresh every saved ID before considering its cached deadline.
+
+    The public API requires posted-date bounds no wider than one year. Look
+    newest first, then search older slices back through the original posting.
+    A missing ID or failed lookup withholds the report rather than dropping a
+    notice whose deadline might have been extended.
+    """
+    refreshed: Dict[str, Any] = {}
+    timings: list[Dict[str, Any]] = []
+    total_calls = 0
+    for notice_id, old in saved.items():
+        started = time.monotonic()
+        try:
+            posted = date.fromisoformat((old.postedDate or "")[:10])
+        except ValueError:
+            posted = today - timedelta(days=364)
+        end = today
+        calls = 0
+        found = None
+        while end >= posted:
+            start = max(posted, end - timedelta(days=364))
+            params = {"postedFrom": start.strftime("%m/%d/%Y"),
+                      "postedTo": end.strftime("%m/%d/%Y"),
+                      "noticeid": notice_id, "limit": 10, "offset": 0}
+            try:
+                data = search(api_key, params)
+            except Exception as exc:
+                raise RuntimeError(f"Could not refresh saved notice {notice_id}") from exc
+            calls += 1
+            for item in data.get("opportunitiesData") or []:
+                if item.get("noticeId") == notice_id:
+                    found = normalize(item)
+                    if not found.description_text:
+                        found.description_text = old.description_text
+                    break
+            if found is not None:
+                break
+            end = start - timedelta(days=1)
+        if found is None:
+            raise RuntimeError(f"Saved notice {notice_id} was not found during daily refresh; report withheld")
+        refreshed[notice_id] = found
+        total_calls += calls
+        timings.append({"query": f"notice:{notice_id}",
+                        "seconds": round(time.monotonic() - started, 3),
+                        "api_calls": calls, "items_returned": 1})
+    return refreshed, timings, total_calls
 
 
 def sam_search_with_retry(
