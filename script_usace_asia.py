@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import sam_search_with_retry
+from sam_common import deadline_urgency_flag, sam_search_with_retry
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -1078,6 +1078,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append(f"  USACE dropped for no QC/QS signal: {stats.get('usace_dropped_no_qc', 0)}")
     lines.append(f"Top opportunities: {len(top)}")
     lines.append(f"Next-best shortlist: {len(shortlist)}")
+    lines.append("❗ = response due within 3 days. NEW/UPDATED labels will be added with historical tracking.")
     lines.append("")
 
     lines.append("HIGH PRIORITY / TOP OPPORTUNITIES")
@@ -1085,7 +1086,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     if not top:
         lines.append("No top opportunities found for this run.")
     for i, opp in enumerate(top, 1):
-        lines.append(f"{i}) {opp.title}")
+        lines.append(f"{i}) {deadline_urgency_flag(opp.responseDeadLine, as_of)} {opp.title}".replace(")  ", ") "))
         lines.append(f"   - Score: {opp.score:.1f} | Feasibility: {opp.feasibility:.2f}")
         tags: List[str] = []
         if opp.is_usace:
@@ -1114,7 +1115,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     for opp in shortlist:
         tag = "USACE" if opp.is_usace else "Regional"
         lines.append(
-            f"- [{tag}] {opp.title} | Score {opp.score:.1f} | {get_location_label(opp)} | "
+            f"- {deadline_urgency_flag(opp.responseDeadLine, as_of)} [{tag}] {opp.title} | Score {opp.score:.1f} | {get_location_label(opp)} | "
             f"{get_setaside_label(opp)} | Due {opp.responseDeadLine or '—'}"
         )
         lines.append(f"  {opp.uiLink}")
@@ -1144,7 +1145,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
         <tr>
           <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{i}</td>
           <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">
-            <div style="font-weight:700;font-size:14px;">{esc(opp.title)}</div>
+            <div style="font-weight:700;font-size:14px;">{esc((deadline_urgency_flag(opp.responseDeadLine, as_of) + " " + opp.title).strip())}</div>
             <div style="margin-top:4px;">{tag_html}</div>
             <div style="margin-top:4px;"><a href="{esc(opp.uiLink)}">Open in SAM.gov</a></div>
             <div style="margin-top:6px;color:#444;"><strong>Why it matters:</strong> {esc(get_match_summary(opp))}</div>
@@ -1233,6 +1234,7 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "notice_type": opp.type,
         "posted_date": opp.postedDate,
         "response_deadline": opp.responseDeadLine,
+        "deadline_flag": deadline_urgency_flag(opp.responseDeadLine),
         "agency_office": opp.fullParentPathName,
         "naics": ", ".join(opp.naicsCodes or []),
         "psc": opp.classificationCode or "",
@@ -1360,6 +1362,7 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 # MAIN
 # -----------------------------
 def run() -> int:
+    run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
 
     now = dt.datetime.now()
@@ -1398,8 +1401,11 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
+    query_timings: List[Dict[str, Any]] = []
 
     for job_name, params in jobs:
+        job_started = time.monotonic()
+        calls_before = total_calls
         offset = 0
         while True:
             p = dict(params)
@@ -1432,6 +1438,13 @@ def run() -> int:
             if len(seen) >= MAX_TOTAL_DEDUPED:
                 break
             time.sleep(SLEEP_SECONDS)
+
+        query_timings.append({
+            "query": job_name,
+            "seconds": round(time.monotonic() - job_started, 3),
+            "api_calls": total_calls - calls_before,
+            "items_returned": job_counts.get(job_name, 0),
+        })
 
         if len(seen) >= MAX_TOTAL_DEDUPED:
             break
@@ -1519,6 +1532,27 @@ def run() -> int:
     )
     for k in sorted(job_counts, key=lambda x: (-job_counts[x], x))[:20]:
         print(f"[JOB] {k}: {job_counts[k]}", file=sys.stderr)
+
+    elapsed_seconds = round(time.monotonic() - run_started, 3)
+    runtime_metrics = {
+        "scanner": "script_usace_asia.py",
+        "generated_at": now.isoformat(),
+        "timeout_minutes": 60,
+        "near_timeout_minutes": 50,
+        "elapsed_seconds": elapsed_seconds,
+        "elapsed_minutes": round(elapsed_seconds / 60.0, 3),
+        "near_timeout": elapsed_seconds >= 50 * 60,
+        "timeout_threshold_reached": elapsed_seconds >= 60 * 60,
+        "api_calls": total_calls,
+        "queries": query_timings,
+    }
+    with open("runtime_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(runtime_metrics, f, indent=2)
+    print(
+        f"[RUNTIME] {runtime_metrics['elapsed_minutes']:.2f} min | "
+        f"near 60-min timeout: {runtime_metrics['near_timeout']}",
+        file=sys.stderr,
+    )
 
     return 0
 
