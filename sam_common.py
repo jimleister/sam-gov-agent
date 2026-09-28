@@ -67,3 +67,28 @@ def sam_search_with_retry(
     raise RuntimeError(
         f"SAM API request failed after {max_attempts} attempts"
     ) from last_error
+
+
+def deadline_urgency_flag(deadline: Any, as_of: Any = None, urgent_days: int = 3) -> str:
+    """Return an exclamation flag when a response deadline is very close."""
+    if not deadline:
+        return ""
+    from datetime import datetime, timezone
+
+    try:
+        due = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+
+    if as_of is None:
+        now = datetime.now(timezone.utc)
+    elif getattr(as_of, "tzinfo", None) is None:
+        now = as_of.replace(tzinfo=timezone.utc)
+    else:
+        now = as_of.astimezone(timezone.utc)
+
+    seconds_left = (due.astimezone(timezone.utc) - now).total_seconds()
+    return "❗" if 0 <= seconds_left <= urgent_days * 86400 else ""
