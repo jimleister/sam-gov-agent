@@ -28,7 +28,7 @@ class RetentionTests(unittest.TestCase):
             self.assertEqual(scanner.load_state(path)["future"].responseDeadLine,
                              future.responseDeadLine)
 
-    def test_old_nc_notice_is_discovered_and_carried_until_deadline(self):
+    def test_saved_id_refreshed_daily_and_extension_wins_over_old_deadline(self):
         # An older notice resembling the supplied September 24 groundskeeping row.
         item = {"noticeId": "832ec3d8334b47c5b796c22a01719016",
                 "title": "Groundskeeping", "postedDate": "2026-09-24",
@@ -40,7 +40,7 @@ class RetentionTests(unittest.TestCase):
 
         def fetch(_key, params):
             queries.append(dict(params))
-            return {"opportunitiesData": [item] if "rdlfrom" in params else []}
+            return {"opportunitiesData": [item] if "rdlfrom" in params or "noticeid" in params else []}
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"SAM_API_KEY": "test-only"}), \
              patch.object(scanner, "sam_search", side_effect=fetch), \
@@ -55,14 +55,21 @@ class RetentionTests(unittest.TestCase):
                 self.assertEqual(len(json.loads(Path("catholic_opportunity_state.json").read_text())["opportunities"]), 1)
                 self.assertTrue(any(p.get("state") == "NC" and p.get("rdlfrom") == "09/28/2026"
                                     and p.get("postedFrom") == "09/29/2025" for p in queries))
-                with patch.object(scanner, "sam_search", return_value={"opportunitiesData": []}), \
-                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(scanner.run(now), 0)
+                queries.clear()
+                item["responseDeadLine"] = "2026-10-20T12:00:00-04:00"
+                after_old_deadline = dt.datetime(2026, 10, 6, 16, 1, tzinfo=dt.timezone.utc)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(scanner.run(after_old_deadline), 0)
                 self.assertEqual(len(json.loads(Path("catholic_opportunity_state.json").read_text())["opportunities"]), 1)
-                expired_at = dt.datetime(2026, 10, 6, 16, 1, tzinfo=dt.timezone.utc)
-                with patch.object(scanner, "sam_search", return_value={"opportunitiesData": []}), \
-                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(json.loads(Path("catholic_opportunity_state.json").read_text())
+                                 ["opportunities"][0]["responseDeadLine"], item["responseDeadLine"])
+                self.assertTrue(any(p.get("noticeid") == item["noticeId"] for p in queries))
+                self.assertFalse(any("rdlfrom" in p for p in queries))
+                queries.clear()
+                expired_at = dt.datetime(2026, 10, 20, 16, 1, tzinfo=dt.timezone.utc)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     self.assertEqual(scanner.run(expired_at), 0)
+                self.assertTrue(any(p.get("noticeid") == item["noticeId"] for p in queries))
                 self.assertEqual(json.loads(Path("catholic_opportunity_state.json").read_text())["opportunities"], [])
             finally:
                 os.chdir(cwd)
@@ -79,6 +86,41 @@ class RetentionTests(unittest.TestCase):
                 send.assert_not_called()
             finally:
                 os.chdir(cwd)
+
+    def test_missing_saved_id_withholds_report_instead_of_dropping_it(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"SAM_API_KEY": "test-only"}), \
+             patch.object(scanner, "sam_search", return_value={"opportunitiesData": []}), \
+             patch.object(scanner, "send_email") as send:
+            cwd = Path.cwd()
+            try:
+                os.chdir(directory)
+                scanner.save_state([scanner.Opportunity("saved-id", "Still open", "", postedDate="2026-09-24",
+                                                        active="Yes", responseDeadLine="2026-10-06T12:00:00-04:00")])
+                with self.assertRaisesRegex(RuntimeError, "not found during daily refresh"):
+                    scanner.run(dt.datetime(2026, 9, 29, tzinfo=dt.timezone.utc))
+                send.assert_not_called()
+                self.assertEqual(len(scanner.load_state()), 1)
+            finally:
+                os.chdir(cwd)
+
+    def test_older_than_one_year_id_is_checked_in_older_date_slice(self):
+        old = scanner.Opportunity("older-id", "Long deadline", "", postedDate="2025-06-02",
+                                  active="Yes", responseDeadLine="2026-12-19T16:00:00-05:00")
+        queries = []
+
+        def fetch(_key, params):
+            queries.append(params)
+            if params["postedFrom"] == "06/02/2025":
+                return {"opportunitiesData": [{"noticeId": "older-id", "title": "Long deadline",
+                                                "postedDate": "2025-06-02", "active": "Yes",
+                                                "responseDeadLine": "2026-12-19T16:00:00-05:00"}]}
+            return {"opportunitiesData": []}
+
+        with patch.object(scanner, "sam_search", side_effect=fetch):
+            refreshed, calls = scanner.refresh_saved_notice("key", old, dt.date(2026, 9, 28))
+        self.assertEqual(refreshed.noticeId, "older-id")
+        self.assertEqual(calls, 2)
+        self.assertEqual(queries[0]["noticeid"], "older-id")
 
 
 if __name__ == "__main__":
