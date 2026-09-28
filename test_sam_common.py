@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from sam_common import sam_search_with_retry
+from sam_common import sam_search_with_retry, deadline_urgency_flag
 
 
 class SamCommonTests(unittest.TestCase):
@@ -56,6 +56,19 @@ class SamCommonTests(unittest.TestCase):
                     max_attempts=3,
                 )
         self.assertEqual(get.call_count, 3)
+
+    def test_deadline_urgency_flag(self):
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
+        self.assertEqual(
+            deadline_urgency_flag("2026-09-30T12:00:00Z", now),
+            "❗",
+        )
+        self.assertEqual(
+            deadline_urgency_flag("2026-10-05T12:00:00Z", now),
+            "",
+        )
 
 
 if __name__ == "__main__":
