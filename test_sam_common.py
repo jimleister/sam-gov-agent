@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from sam_common import sam_search_with_retry, deadline_urgency_flag
+from sam_common import deadline_urgency_flag, sam_search_with_retry, deadline_urgency_flag
 
 
 class SamCommonTests(unittest.TestCase):
