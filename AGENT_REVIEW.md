@@ -107,3 +107,49 @@ important combined alert should be:
 for a newly discovered opportunity whose response deadline is within 3 days.
 Until historical state exists, the current `❗` flag indicates a short
 deadline but does not claim the opportunity is new.
+
+
+## Runtime threshold tracking
+
+The scheduled workflows use a **60-minute job timeout**. Each completed scanner
+run now writes `runtime_metrics.json` with:
+
+- total run elapsed time
+- elapsed time for each structured SAM.gov query/job
+- result count by query/job
+- percentage of the 60-minute threshold consumed
+- a `near_timeout` flag at 80% of the threshold
+
+The metrics file is retained with the daily workflow artifacts. Historical
+tracking should aggregate these records so we can see which query families most
+often consume the runtime budget and how frequently a scanner approaches the
+60-minute limit. A run that actually reaches GitHub's 60-minute job timeout may
+be terminated before the script can write its final metrics file, so GitHub
+Actions run status/duration should also be included in that historical record.
+
+## Deadline urgency flag
+
+Report output now prefixes opportunities due within **3 days** with `❗`.
+The same urgency marker is included in flattened CSV/XLSX data as
+`urgency_flag`.
+
+When historical notice tracking is added, the report should combine status and
+urgency so a newly discovered opportunity with an unusually short response
+window is especially conspicuous (for example, `❗ NEW`). The current change
+does not guess whether an opportunity is new; it only evaluates the actual
+response deadline.
+
+## Historical tracking design note
+
+The future persistent history should retain at minimum:
+
+- notice ID
+- first-seen timestamp
+- most-recent-seen timestamp
+- material fields used to detect updates
+- prior response deadline
+- scanner(s) that surfaced the notice
+- runtime metrics by scanner/query and GitHub run duration/status
+
+That supports `NEW`, `UPDATED`, and `SEEN BEFORE` labels without changing
+the underlying search coverage.
