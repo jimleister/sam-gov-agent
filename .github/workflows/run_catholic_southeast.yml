@@ -2,7 +2,7 @@ name: SAM.gov — Catholic Southeast / Full North Carolina
 
 on:
   schedule:
-    - cron: '15 11 * * *'  # 6:15 AM ET, 15 min after USACE + S/SE Asia run (11:00)
+    - cron: '15 11 * * *'  # 11:15 UTC (07:15 EDT / 06:15 EST)
   workflow_dispatch:
 
 permissions:
