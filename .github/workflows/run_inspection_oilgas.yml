@@ -2,7 +2,7 @@ name: SAM.gov — Inspection / Oil and Gas
 
 on:
   schedule:
-    - cron: '30 11 * * *'  # 6:30 AM ET, staggered after the other morning scans
+    - cron: '30 11 * * *'  # 11:30 UTC (07:30 EDT / 06:30 EST)
   workflow_dispatch:
 
 permissions:
