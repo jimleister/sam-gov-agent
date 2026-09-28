@@ -56,7 +56,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
+from sam_common import (deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics,
+                        load_opportunity_state, save_opportunity_state,
+                        refresh_saved_opportunities, response_deadline_open)
 
 import smtplib
 from email.message import EmailMessage
@@ -71,6 +73,7 @@ SAM_SEARCH_URL = "https://api.sam.gov/prod/opportunities/v2/search"
 NOTICE_TYPES = ["r", "p", "o", "k"]  # Sources Sought, Presolicitation, Solicitation, Combined
 POSTED_WINDOW_HOURS = 72
 ACTIVE_ONLY = True
+STATE_FILE = Path("inspection_oilgas_opportunity_state.json")
 
 # -----------------------------
 # NAICS — inspection + oil/gas universe
@@ -621,14 +624,10 @@ def term_matches(text: str, term: str) -> bool:
     return re.search(pattern, text) is not None
 
 
-def hard_filters_ok(opp: Opportunity, today: dt.date, due_max: dt.date) -> bool:
+def hard_filters_ok(opp: Opportunity, now: dt.datetime) -> bool:
     if ACTIVE_ONLY and (opp.active or "").lower() != "yes":
         return False
-    if opp.responseDeadLine:
-        due_dt = parse_iso_date(opp.responseDeadLine)
-        if due_dt and not (today <= due_dt.date() <= due_max):
-            return False
-    return True
+    return response_deadline_open(opp.responseDeadLine, now)
 
 
 def add_job_tag(opp: Opportunity, job_tag: str) -> None:
@@ -912,7 +911,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append("Good morning,")
     lines.append("")
     lines.append("Today's SAM.gov scan for inspection and oil & gas opportunities (global scope).")
-    lines.append(f"Search window: last ~{POSTED_WINDOW_HOURS} hours")
+    lines.append(f"New postings: last ~{POSTED_WINDOW_HOURS} hours. Saved notices refreshed daily through their response deadlines.")
     lines.append(f"Total scored: {stats.get('scored', 0)}")
     lines.append(f"  Inspection matches: {stats.get('inspection', 0)}")
     lines.append(f"  Oil & Gas matches: {stats.get('oilgas', 0)}")
@@ -1005,7 +1004,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
     <html>
     <body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
       <h2 style="margin-bottom:4px;">Inspection + Oil &amp; Gas Opportunities</h2>
-      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Search window: last ~{POSTED_WINDOW_HOURS} hours. Global scope.</p>
+      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. New postings: last ~{POSTED_WINDOW_HOURS} hours; saved IDs refreshed daily. Global scope.</p>
 
       <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;">
         <tr>
@@ -1130,7 +1129,8 @@ def write_results_xlsx(scored: List[Opportunity], top_ids: set, shortlist_ids: s
     summary.append(["Sweet spot (both)", stats.get("sweet_spot", 0)])
     summary.append(["Top opportunities", len(top_ids)])
     summary.append(["Shortlist opportunities", len(shortlist_ids)])
-    summary.append(["Search window hours", POSTED_WINDOW_HOURS])
+    summary.append(["New-posting search window hours", POSTED_WINDOW_HOURS])
+    summary.append(["Saved notices", "Refreshed by ID daily through deadline"])
     for cell in summary[1]:
         cell.font = Font(bold=True)
     summary.column_dimensions["A"].width = 32
@@ -1187,15 +1187,14 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 # -----------------------------
 # MAIN
 # -----------------------------
-def run() -> int:
+def run(as_of: Optional[dt.datetime] = None) -> int:
     run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
 
-    now = dt.datetime.now()
+    now = as_of or dt.datetime.now(dt.timezone.utc)
     today = now.date()
     posted_from = (now - dt.timedelta(hours=POSTED_WINDOW_HOURS)).date()
     posted_to = today
-    due_max = today + dt.timedelta(days=365)
 
     base = {
         "postedFrom": mmddyyyy(posted_from),
@@ -1213,11 +1212,10 @@ def run() -> int:
     for code in PSCS:
         jobs.append((f"psc:{code}", {**base, "ccode": code}))
 
-    seen: Dict[str, Opportunity] = {}
-    total_calls = 0
+    saved = load_opportunity_state(STATE_FILE, Opportunity)
+    seen, query_timings, total_calls = refresh_saved_opportunities(
+        api_key, saved, today, sam_search, normalize)
     job_counts: Dict[str, int] = {}
-
-    query_timings: List[Dict[str, Any]] = []
 
     for job_name, params in jobs:
         job_started = time.monotonic()
@@ -1229,8 +1227,7 @@ def run() -> int:
             try:
                 data = sam_search(api_key, p)
             except Exception as e:
-                print(f"[WARN] Job {job_name} failed at offset {offset}: {e}", file=sys.stderr)
-                break
+                raise RuntimeError(f"{STATE_FILE.name} scan incomplete: {job_name} offset {offset}") from e
             total_calls += 1
 
             items = data.get("opportunitiesData") or []
@@ -1250,9 +1247,9 @@ def run() -> int:
                 break
             offset += int(p["limit"])
             if offset > 10000 or offset >= MAX_PER_JOB:
-                break
+                raise RuntimeError(f"Inspection/oilgas scan truncated: {job_name} reached {offset} results")
             if len(seen) >= MAX_TOTAL_DEDUPED:
-                break
+                raise RuntimeError("Inspection/oilgas scan truncated: candidate limit reached")
             time.sleep(SLEEP_SECONDS)
 
         query_timings.append({
@@ -1263,16 +1260,16 @@ def run() -> int:
         })
 
         if len(seen) >= MAX_TOTAL_DEDUPED:
-            break
+            raise RuntimeError("Inspection/oilgas scan truncated: candidate limit reached")
 
     scored: List[Opportunity] = []
     stats = {"scored": 0, "inspection": 0, "oilgas": 0, "sweet_spot": 0, "no_match": 0}
 
     for opp in seen.values():
-        if not hard_filters_ok(opp, today=today, due_max=due_max):
+        if not hard_filters_ok(opp, now=now):
             continue
 
-        opp.description_text = sam_fetch_description(opp.description_url)
+        opp.description_text = sam_fetch_description(opp.description_url) or opp.description_text
         add_structural_reasons(opp)
         estimate_ratings(opp)
 
@@ -1295,6 +1292,7 @@ def run() -> int:
             stats["sweet_spot"] += 1
 
     scored.sort(key=lambda x: x.score, reverse=True)
+    save_opportunity_state(STATE_FILE, scored)
 
     top = scored[:TOP_MAX]
     if len(top) < TOP_MIN:
