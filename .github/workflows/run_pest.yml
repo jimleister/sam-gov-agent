@@ -2,7 +2,7 @@ name: SAM.gov — Pest / Vector
 
 on:
   schedule:
-    - cron: '45 10 * * *'  # offset 15 min from logistics run to avoid simultaneous API calls
+    - cron: '45 10 * * *'  # 10:45 UTC (06:45 EDT / 05:45 EST)
   workflow_dispatch:
 
 permissions:
