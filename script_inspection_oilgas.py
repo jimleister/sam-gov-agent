@@ -56,6 +56,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
+from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
 
 import smtplib
 from email.message import EmailMessage
@@ -528,12 +529,7 @@ def parse_iso_date(iso_dt: str) -> Optional[dt.datetime]:
 
 
 def sam_search(api_key: str, params: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
-    q = dict(params)
-    q["api_key"] = api_key
-    r = requests.get(SAM_SEARCH_URL, params=q, timeout=timeout)
-    if r.status_code != 200:
-        raise RuntimeError(f"SAM API error {r.status_code}: {r.text[:800]}")
-    return r.json()
+    return sam_search_with_retry(SAM_SEARCH_URL, api_key, params, timeout=timeout)
 
 
 def sam_fetch_description(desc_url: str, timeout: int = 60) -> str:
@@ -923,6 +919,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append(f"  Sweet spot (both): {stats.get('sweet_spot', 0)}")
     lines.append(f"Top opportunities: {len(top)}")
     lines.append(f"Next-best shortlist: {len(shortlist)}")
+    lines.append("❗ = response due within 3 days. NEW/UPDATED labels will be added with historical tracking.")
     lines.append("")
 
     lines.append("HIGH PRIORITY / TOP OPPORTUNITIES")
@@ -930,7 +927,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     if not top:
         lines.append("No top opportunities found for this run.")
     for i, opp in enumerate(top, 1):
-        lines.append(f"{i}) [{get_scope_tag(opp)}] {opp.title}")
+        lines.append(f"{i}) {deadline_urgency_flag(opp.responseDeadLine, as_of)} [{get_scope_tag(opp)}] {opp.title}".replace(")  ", ") "))
         lines.append(f"   - Score: {opp.score:.1f} | Feasibility: {opp.feasibility:.2f}")
         lines.append(f"   - Agency/Office: {opp.fullParentPathName or '—'}")
         lines.append(f"   - Location: {get_location_label(opp)}")
@@ -948,7 +945,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
         lines.append("No shortlist opportunities found for this run.")
     for opp in shortlist:
         lines.append(
-            f"- [{get_scope_tag(opp)}] {opp.title} | Score {opp.score:.1f} | "
+            f"- {deadline_urgency_flag(opp.responseDeadLine, as_of)} [{get_scope_tag(opp)}] {opp.title} | Score {opp.score:.1f} | "
             f"{get_location_label(opp)} | {get_setaside_label(opp)} | "
             f"Due {opp.responseDeadLine or '—'}"
         )
@@ -977,7 +974,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
         <tr>
           <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">{i}</td>
           <td style="vertical-align:top;padding:8px;border-bottom:1px solid #ddd;">
-            <div style="font-weight:700;font-size:14px;">{esc(opp.title)}</div>
+            <div style="font-weight:700;font-size:14px;">{esc((deadline_urgency_flag(opp.responseDeadLine, as_of) + " " + opp.title).strip())}</div>
             <div style="margin-top:4px;">{scope_pill(opp)}</div>
             <div style="margin-top:4px;"><a href="{esc(opp.uiLink)}">Open in SAM.gov</a></div>
             <div style="margin-top:6px;color:#444;"><strong>Why it matters:</strong> {esc(get_match_summary(opp))}</div>
@@ -1064,6 +1061,8 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "notice_type": opp.type,
         "posted_date": opp.postedDate,
         "response_deadline": opp.responseDeadLine,
+        "urgency_flag": deadline_urgency_flag(opp.responseDeadLine),
+        "deadline_flag": deadline_urgency_flag(opp.responseDeadLine),
         "agency_office": opp.fullParentPathName,
         "naics": ", ".join(opp.naicsCodes or []),
         "psc": opp.classificationCode or "",
@@ -1189,6 +1188,7 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 # MAIN
 # -----------------------------
 def run() -> int:
+    run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
 
     now = dt.datetime.now()
@@ -1217,7 +1217,11 @@ def run() -> int:
     total_calls = 0
     job_counts: Dict[str, int] = {}
 
+    query_timings: List[Dict[str, Any]] = []
+
     for job_name, params in jobs:
+        job_started = time.monotonic()
+        calls_before = total_calls
         offset = 0
         while True:
             p = dict(params)
@@ -1250,6 +1254,13 @@ def run() -> int:
             if len(seen) >= MAX_TOTAL_DEDUPED:
                 break
             time.sleep(SLEEP_SECONDS)
+
+        query_timings.append({
+            "query": job_name,
+            "seconds": round(time.monotonic() - job_started, 3),
+            "api_calls": total_calls - calls_before,
+            "items_returned": job_counts.get(job_name, 0),
+        })
 
         if len(seen) >= MAX_TOTAL_DEDUPED:
             break
@@ -1325,6 +1336,14 @@ def run() -> int:
     )
     for k in sorted(job_counts, key=lambda x: (-job_counts[x], x))[:20]:
         print(f"[JOB] {k}: {job_counts[k]}", file=sys.stderr)
+
+    metrics_path = write_runtime_metrics(
+        "script_inspection_oilgas.py",
+        query_timings,
+        time.monotonic() - run_started,
+        total_calls,
+    )
+    print(f"[INFO] Wrote runtime telemetry: {metrics_path}", file=sys.stderr)
 
     return 0
 
