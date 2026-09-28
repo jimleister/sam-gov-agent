@@ -64,7 +64,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
+from sam_common import (deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics,
+                        load_opportunity_state, save_opportunity_state,
+                        refresh_saved_opportunities, response_deadline_open)
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -80,6 +82,7 @@ SAM_SEARCH_URL = "https://api.sam.gov/prod/opportunities/v2/search"
 NOTICE_TYPES = ["r", "p", "o", "k"]  # Sources Sought, Presolicitation, Solicitation, Combined Synopsis/Solicitation
 POSTED_WINDOW_HOURS = 96 # 4 days
 ACTIVE_ONLY = True
+STATE_FILE = Path("usace_asia_opportunity_state.json")
 
 # -----------------------------
 # GEOGRAPHY
@@ -786,14 +789,10 @@ def include_by_scope(opp: Opportunity) -> Tuple[bool, str]:
     return False, f"Non-USACE outside target Asia region (region={region or 'unknown'})"
 
 
-def hard_filters_ok(opp: Opportunity, today: dt.date, due_max: dt.date) -> bool:
+def hard_filters_ok(opp: Opportunity, now: dt.datetime) -> bool:
     if ACTIVE_ONLY and (opp.active or "").lower() != "yes":
         return False
-    if opp.responseDeadLine:
-        due_dt = parse_iso_date(opp.responseDeadLine)
-        if due_dt and not (today <= due_dt.date() <= due_max):
-            return False
-    return True
+    return response_deadline_open(opp.responseDeadLine, now)
 
 
 def add_job_tag(opp: Opportunity, job_tag: str) -> None:
@@ -1069,7 +1068,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append("Good morning,")
     lines.append("")
     lines.append(f"Today's SAM.gov scan for USACE (quality control/QA/surveillance only) + South/Southeast Asia + Nepal (all agencies).")
-    lines.append(f"Search window: last ~{POSTED_WINDOW_HOURS} hours")
+    lines.append(f"New postings: last ~{POSTED_WINDOW_HOURS} hours. Saved notices refreshed daily through their response deadlines.")
     lines.append(f"Total in scope: {stats.get('in_scope', 0)}")
     lines.append(f"  USACE, QC/QS match only (any covered geography): {stats.get('usace', 0)}")
     lines.append(f"  Non-USACE in South/SE Asia: {stats.get('asia_only', 0)}")
@@ -1177,7 +1176,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
     <html>
     <body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
       <h2 style="margin-bottom:4px;">USACE (QC/QS) + South/Southeast Asia + Nepal Opportunities</h2>
-      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Search window: last ~{POSTED_WINDOW_HOURS} hours.</p>
+      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. New postings: last ~{POSTED_WINDOW_HOURS} hours; saved IDs refreshed daily.</p>
 
       <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;">
         <tr>
@@ -1305,7 +1304,8 @@ def write_results_xlsx(scored: List[Opportunity], top_ids: set, shortlist_ids: s
     summary.append(["USACE dropped for no QC/QS signal", stats.get("usace_dropped_no_qc", 0)])
     summary.append(["Top opportunities", len(top_ids)])
     summary.append(["Shortlist opportunities", len(shortlist_ids)])
-    summary.append(["Search window hours", POSTED_WINDOW_HOURS])
+    summary.append(["New-posting search window hours", POSTED_WINDOW_HOURS])
+    summary.append(["Saved notices", "Refreshed by ID daily through deadline"])
     for cell in summary[1]:
         cell.font = Font(bold=True)
     summary.column_dimensions["A"].width = 32
@@ -1362,15 +1362,14 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 # -----------------------------
 # MAIN
 # -----------------------------
-def run() -> int:
+def run(as_of: Optional[dt.datetime] = None) -> int:
     run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
 
-    now = dt.datetime.now()
+    now = as_of or dt.datetime.now(dt.timezone.utc)
     today = now.date()
     posted_from = (now - dt.timedelta(hours=POSTED_WINDOW_HOURS)).date()
     posted_to = today
-    due_max = today + dt.timedelta(days=365)
 
     base = {
         "postedFrom": mmddyyyy(posted_from),
@@ -1399,11 +1398,10 @@ def run() -> int:
     # to everything it turns up except Nepal.
     jobs.append(("global-sweep", dict(base)))
 
-    seen: Dict[str, Opportunity] = {}
-    total_calls = 0
+    saved = load_opportunity_state(STATE_FILE, Opportunity)
+    seen, query_timings, total_calls = refresh_saved_opportunities(
+        api_key, saved, today, sam_search, normalize)
     job_counts: Dict[str, int] = {}
-
-    query_timings: List[Dict[str, Any]] = []
 
     for job_name, params in jobs:
         job_started = time.monotonic()
@@ -1415,8 +1413,7 @@ def run() -> int:
             try:
                 data = sam_search(api_key, p)
             except Exception as e:
-                print(f"[WARN] Job {job_name} failed at offset {offset}: {e}", file=sys.stderr)
-                break
+                raise RuntimeError(f"{STATE_FILE.name} scan incomplete: {job_name} offset {offset}") from e
             total_calls += 1
 
             items = data.get("opportunitiesData") or []
@@ -1436,9 +1433,9 @@ def run() -> int:
                 break
             offset += int(p["limit"])
             if offset > 10000 or offset >= MAX_PER_JOB:
-                break
+                raise RuntimeError(f"USACE/Asia scan truncated: {job_name} reached {offset} results")
             if len(seen) >= MAX_TOTAL_DEDUPED:
-                break
+                raise RuntimeError("USACE/Asia scan truncated: candidate limit reached")
             time.sleep(SLEEP_SECONDS)
 
         query_timings.append({
@@ -1449,7 +1446,7 @@ def run() -> int:
         })
 
         if len(seen) >= MAX_TOTAL_DEDUPED:
-            break
+            raise RuntimeError("USACE/Asia scan truncated: candidate limit reached")
 
     scored: List[Opportunity] = []
     stats = {
@@ -1458,11 +1455,11 @@ def run() -> int:
     }
 
     for opp in seen.values():
-        if not hard_filters_ok(opp, today=today, due_max=due_max):
+        if not hard_filters_ok(opp, now=now):
             continue
 
         # Description fetch (best-effort; needed for USACE detection + region text fallback).
-        opp.description_text = sam_fetch_description(opp.description_url)
+        opp.description_text = sam_fetch_description(opp.description_url) or opp.description_text
 
         opp.is_usace, opp.usace_district = detect_usace(opp)
         opp.region_bucket = classify_region(opp)
@@ -1492,6 +1489,7 @@ def run() -> int:
             stats["nepal"] += 1
 
     scored.sort(key=lambda x: x.score, reverse=True)
+    save_opportunity_state(STATE_FILE, scored)
 
     top = scored[:TOP_MAX]
     if len(top) < TOP_MIN:
