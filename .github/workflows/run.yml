@@ -2,7 +2,7 @@ name: SAM.gov — Logistics / WEXMAC
 
 on:
   schedule:
-    - cron: '15 8 * * *'  # 2:15 PM Nepal time
+    - cron: '15 8 * * *'  # 08:15 UTC (04:15 EDT / 03:15 EST; 14:00 Nepal)
   workflow_dispatch:
 
 permissions:
