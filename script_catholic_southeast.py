@@ -544,6 +544,35 @@ def save_state(opportunities: List[Opportunity], path: Path = STATE_FILE) -> Non
     temporary.replace(path)
 
 
+def refresh_saved_notice(api_key: str, old: Opportunity, today: dt.date) -> Tuple[Opportunity, int]:
+    """Look up one saved ID in one-year posted-date slices, newest first.
+
+    A notice can be amended after its original posting. Search the current
+    year first, then older slices back through the saved posting date.
+    Never assume the cached response deadline is still final.
+    """
+    try:
+        posted = dt.date.fromisoformat((old.postedDate or "")[:10])
+    except ValueError:
+        posted = today - dt.timedelta(days=364)
+    calls = 0
+    end = today
+    while end >= posted:
+        start = max(posted, end - dt.timedelta(days=364))
+        params = {"postedFrom": mmddyyyy(start), "postedTo": mmddyyyy(end),
+                  "noticeid": old.noticeId, "limit": 10, "offset": 0}
+        try:
+            data = sam_search(api_key, params)
+        except Exception as e:
+            raise RuntimeError(f"Could not refresh saved notice {old.noticeId}") from e
+        calls += 1
+        for item in data.get("opportunitiesData") or []:
+            if item.get("noticeId") == old.noticeId:
+                return normalize(item), calls
+        end = start - dt.timedelta(days=1)
+    raise RuntimeError(f"Saved notice {old.noticeId} was not found during daily refresh; report withheld")
+
+
 def add_job_tag(opp: Opportunity, job_tag: str) -> None:
     tag = f"signal:{job_tag}"
     if tag not in opp.why_matched:
@@ -780,7 +809,7 @@ def build_email(top: List[Opportunity], shortlist: List[Opportunity], as_of: dt.
     lines.append("Good morning,")
     lines.append("")
     lines.append("Today's SAM.gov scan for Catholic institutions (VA/GA/SC/KY/WV/DC) + full North Carolina coverage.")
-    lines.append("Open through submission deadline (NC: up to one year of postings plus saved notices; other states: new notices plus saved notices)")
+    lines.append("Daily notice-ID refresh through current deadline; recent discovery and weekly NC backfill")
     lines.append(f"Total in scope: {stats.get('in_scope', 0)}")
     lines.append(f"  North Carolina (all agencies/domains): {stats.get('nc_total', 0)}")
     lines.append(f"  NC + SDVOSB (sweet spot): {stats.get('nc_sdvosb', 0)}")
@@ -883,7 +912,7 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
     <html>
     <body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
       <h2 style="margin-bottom:4px;">Catholic Institutions (VA/GA/SC/KY/WV/DC) + Full NC Sweep</h2>
-      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Open through submission deadline; saved notices carry forward.</p>
+      <p style="margin-top:0;color:#555;">Generated {as_of:%b %d, %Y %H:%M}. Saved IDs refreshed daily through current deadline; weekly NC backfill.</p>
 
       <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;">
         <tr>
@@ -1008,8 +1037,8 @@ def write_results_xlsx(scored: List[Opportunity], top_ids: set, shortlist_ids: s
     summary.append(["Catholic keyword match (VA/GA/SC/KY/WV/DC)", stats.get("catholic_match", 0)])
     summary.append(["Top opportunities", len(top_ids)])
     summary.append(["Shortlist opportunities", len(shortlist_ids)])
-    summary.append(["NC posted-date discovery", "Past year; open response deadline"])
-    summary.append(["Other discovery", f"Past {POSTED_WINDOW_HOURS} hours; saved notices carry forward"])
+    summary.append(["NC backfill", "First run and Sundays; past year"])
+    summary.append(["Daily discovery", f"Past {POSTED_WINDOW_HOURS} hours; all saved IDs refreshed"])
     for cell in summary[1]:
         cell.font = Font(bold=True)
     summary.column_dimensions["A"].width = 40
@@ -1083,10 +1112,8 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
         "limit": 1000,
     }
 
-    # NC gets a year of posted dates filtered to open response deadlines.
-    # The API requires posted-date bounds within one year. The recent NC
-    # query also discovers notices without a specified response deadline.
-    # Saved results carry notices beyond the API's one-year date limit.
+    # Backfill NC on the first run and weekly. Daily discovery stays narrow;
+    # every saved ID is refreshed separately before its deadline is assessed.
     nc_open = {**base, "postedFrom": mmddyyyy(today - dt.timedelta(days=364)),
                "state": FULL_SWEEP_STATE, "rdlfrom": mmddyyyy(today)}
 
@@ -1096,7 +1123,10 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     # an office based in one of these states can post a notice whose POP
     # field doesn't reflect it). The geography/keyword filter downstream
     # trims aggressively; this stage is purely about not missing candidates.
-    jobs: List[Tuple[str, Dict[str, Any]]] = [("state:NC-open", nc_open)]
+    state_exists = STATE_FILE.exists()
+    jobs: List[Tuple[str, Dict[str, Any]]] = []
+    if not state_exists or today.weekday() == 6:  # first run or Sunday reconciliation
+        jobs.append(("state:NC-open-backfill", nc_open))
     for st in TARGET_STATES:
         jobs.append((f"state:{st}", {**base, "state": st}))
     jobs.append(("global-sweep", dict(base)))
@@ -1107,6 +1137,23 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     total_calls = 0
     job_counts: Dict[str, int] = {}
     query_timings: List[Dict[str, Any]] = []
+
+    # Refresh first, even if the saved deadline has just elapsed: an amendment
+    # may have extended it. A failed/missing ID withholds the report instead
+    # of deleting a possibly extended opportunity.
+    for notice_id, old in carried.items():
+        job_started = time.monotonic()
+        refreshed, calls = refresh_saved_notice(api_key, old, today)
+        total_calls += calls
+        seen[notice_id] = refreshed
+        fresh_ids.add(notice_id)
+        add_job_tag(refreshed, "daily-ID-refresh")
+        query_timings.append({
+            "query": f"notice:{notice_id}",
+            "seconds": round(time.monotonic() - job_started, 3),
+            "api_calls": calls,
+            "items_returned": 1,
+        })
 
     for job_name, params in jobs:
         job_started = time.monotonic()
