@@ -1234,6 +1234,7 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "notice_type": opp.type,
         "posted_date": opp.postedDate,
         "response_deadline": opp.responseDeadLine,
+        "urgency_flag": deadline_urgency_flag(opp.responseDeadLine),
         "deadline_flag": deadline_urgency_flag(opp.responseDeadLine),
         "agency_office": opp.fullParentPathName,
         "naics": ", ".join(opp.naicsCodes or []),
@@ -1364,6 +1365,7 @@ def send_email(subject: str, body: str, html_body: Optional[str] = None, attachm
 def run() -> int:
     run_started = time.monotonic()
     api_key = require_env("SAM_API_KEY")
+    run_started = time.monotonic()
 
     now = dt.datetime.now()
     today = now.date()
@@ -1401,6 +1403,7 @@ def run() -> int:
     seen: Dict[str, Opportunity] = {}
     total_calls = 0
     job_counts: Dict[str, int] = {}
+    job_elapsed_seconds: Dict[str, float] = {}
     job_durations: Dict[str, float] = {}
     query_timings: List[Dict[str, Any]] = []
 
@@ -1554,6 +1557,14 @@ def run() -> int:
         f"near 60-min timeout: {runtime_metrics['near_timeout']}",
         file=sys.stderr,
     )
+
+    metrics_path = write_runtime_metrics(
+        job_elapsed_seconds,
+        job_counts,
+        time.monotonic() - run_started,
+        timeout_minutes=60,
+    )
+    print(f"[INFO] Wrote runtime telemetry: {metrics_path}", file=sys.stderr)
 
     return 0
 
