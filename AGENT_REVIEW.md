@@ -153,3 +153,27 @@ The future persistent history should retain at minimum:
 
 That supports `NEW`, `UPDATED`, and `SEEN BEFORE` labels without changing
 the underlying search coverage.
+
+
+## Runtime and historical tracking
+
+All five scheduled workflows now use a **60-minute timeout**. Each scanner writes
+`runtime_metrics.json` with total elapsed time plus per-query timing, API call
+count, and item count. The metrics also mark runs at or above 50 minutes as
+`near_timeout` and at or above 60 minutes as `timeout_threshold_reached`.
+
+The runtime file is uploaded with each run's artifacts so we can measure which
+scanner/query families are driving long runs. The next historical-tracking phase
+should persist these metrics across runs and summarize how often each scanner
+approaches the 60-minute threshold.
+
+## Historical opportunity status and deadline urgency
+
+Historical opportunity tracking is still planned rather than inferred from the
+current posting window. Once the persistent notice-history store is added,
+reports should label opportunities `NEW`, `UPDATED`, and `SEEN BEFORE`.
+
+In the meantime, all five reports now add a **❗** deadline flag to opportunities
+whose response deadline is within three days. The report note explicitly says
+that NEW/UPDATED labels will be added with historical tracking. This avoids
+calling an opportunity "new" until the system can verify that from prior runs.
