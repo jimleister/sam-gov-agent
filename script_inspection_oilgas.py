@@ -56,6 +56,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
+from sam_common import add_refresh_warning, retain_unavailable_notice
 from sam_common import (deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics,
                         load_opportunity_state, save_opportunity_state,
                         refresh_saved_opportunities, response_deadline_open)
@@ -499,6 +500,7 @@ class Opportunity:
     pop_state_name: Optional[str] = None
     pop_city_name: Optional[str] = None
 
+    refresh_status: str = "current"
     why_matched: List[str] = field(default_factory=list)
     description_text: str = ""
     matched_families: List[str] = field(default_factory=list)
@@ -1043,7 +1045,8 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
 
 def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
     return {
-        "rank_group": rank_group,
+        "rank_group": "REVIEW — refresh unavailable" if opp.refresh_status == "unavailable" else rank_group,
+        "refresh_status": opp.refresh_status,
         "score": round(float(opp.score or 0), 3),
         "feasibility": round(float(opp.feasibility or 0), 3),
         "scope_tag": get_scope_tag(opp),
@@ -1239,7 +1242,7 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
                 opp = normalize(item)
                 if not opp.noticeId:
                     continue
-                if opp.noticeId not in seen:
+                if opp.noticeId not in seen or seen[opp.noticeId].refresh_status == "unavailable":
                     seen[opp.noticeId] = opp
                 add_job_tag(seen[opp.noticeId], job_name)
 
@@ -1266,6 +1269,9 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     stats = {"scored": 0, "inspection": 0, "oilgas": 0, "sweet_spot": 0, "no_match": 0}
 
     for opp in seen.values():
+        if opp.refresh_status == "unavailable":
+            scored.append(opp)
+            continue
         if not hard_filters_ok(opp, now=now):
             continue
 
@@ -1291,14 +1297,15 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
         if opp.ratings.get("matched_inspection") and opp.ratings.get("matched_oilgas"):
             stats["sweet_spot"] += 1
 
-    scored.sort(key=lambda x: x.score, reverse=True)
+    scored.sort(key=lambda x: (x.refresh_status != "unavailable", x.score), reverse=True)
     save_opportunity_state(STATE_FILE, scored)
 
-    top = scored[:TOP_MAX]
+    current_scored = [o for o in scored if o.refresh_status != "unavailable"]
+    top = current_scored[:TOP_MAX]
     if len(top) < TOP_MIN:
-        top = scored[:max(TOP_MIN, len(scored))]
+        top = current_scored[:max(TOP_MIN, len(current_scored))]
     top_ids = {o.noticeId for o in top}
-    remaining = [o for o in scored if o.noticeId not in top_ids]
+    remaining = [o for o in current_scored if o.noticeId not in top_ids]
     shortlist = remaining[:SHORTLIST_MAX]
     if len(shortlist) < SHORTLIST_MIN:
         shortlist = remaining[:max(SHORTLIST_MIN, len(remaining))]
@@ -1309,6 +1316,8 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
 
     email_text = build_email(top, shortlist, now, stats)
     email_html = build_html_email(top, shortlist, now, stats)
+
+    email_text, email_html = add_refresh_warning(email_text, email_html, scored)
 
     with open("email_draft.txt", "w", encoding="utf-8") as f:
         f.write(email_text)
@@ -1348,3 +1357,4 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
+

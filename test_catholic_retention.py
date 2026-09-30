@@ -87,7 +87,7 @@ class RetentionTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
-    def test_missing_saved_id_withholds_report_instead_of_dropping_it(self):
+    def test_missing_saved_id_sends_flagged_report_and_keeps_for_retry(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"SAM_API_KEY": "test-only"}), \
              patch.object(scanner, "sam_search", return_value={"opportunitiesData": []}), \
              patch.object(scanner, "send_email") as send:
@@ -96,10 +96,13 @@ class RetentionTests(unittest.TestCase):
                 os.chdir(directory)
                 scanner.save_state([scanner.Opportunity("saved-id", "Still open", "", postedDate="2026-09-24",
                                                         active="Yes", responseDeadLine="2026-10-06T12:00:00-04:00")])
-                with self.assertRaisesRegex(RuntimeError, "not found during daily refresh"):
-                    scanner.run(dt.datetime(2026, 9, 29, tzinfo=dt.timezone.utc))
-                send.assert_not_called()
-                self.assertEqual(len(scanner.load_state()), 1)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(scanner.run(dt.datetime(2026, 10, 7, tzinfo=dt.timezone.utc)), 0)
+                send.assert_called_once()
+                self.assertIn("UNVERIFIED", Path("email_draft.txt").read_text())
+                saved = scanner.load_state()
+                self.assertEqual(saved["saved-id"].refresh_status, "unavailable")
+                self.assertEqual(saved["saved-id"].responseDeadLine, "2026-10-06T12:00:00-04:00")
             finally:
                 os.chdir(cwd)
 
@@ -125,3 +128,4 @@ class RetentionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

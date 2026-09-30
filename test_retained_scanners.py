@@ -16,6 +16,50 @@ SCANNERS = ("script", "script_pest", "script_usace_asia", "script_inspection_oil
 
 
 class RetainedScannerTests(unittest.TestCase):
+    def test_missing_saved_notice_does_not_block_other_results_and_retries(self):
+        for name in SCANNERS:
+            with self.subTest(scanner=name):
+                module = importlib.import_module(name)
+                old = module.Opportunity("missing", "Saved opportunity", "", postedDate="2026-09-24",
+                                         active="Yes", responseDeadLine="2026-09-28T12:00:00Z")
+                current = {"noticeId": "fresh", "title": "Pipeline inspection pest logistics in Nepal",
+                           "postedDate": "2026-09-29", "active": "Yes", "type": "Solicitation",
+                           "responseDeadLine": "2026-10-20T12:00:00Z",
+                           "placeOfPerformance": {"country": {"code": "NPL", "name": "NEPAL"}}}
+                queries = []
+                def fetch(_key, params):
+                    queries.append(dict(params))
+                    return {"opportunitiesData": [] if params.get("noticeid") else [current]}
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"SAM_API_KEY": "test-only"}), \
+                     patch.object(module, "sam_search", side_effect=fetch), \
+                     patch.object(module, "sam_fetch_description", return_value="Pipeline inspection pest logistics in Nepal"), \
+                     patch.object(module, "send_email") as send:
+                    cwd = Path.cwd()
+                    try:
+                        os.chdir(directory)
+                        save_opportunity_state(module.STATE_FILE, [old])
+                        for day in (29, 30):
+                            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                                self.assertEqual(module.run(dt.datetime(2026, 9, day, tzinfo=dt.timezone.utc)), 0)
+                            saved = load_opportunity_state(module.STATE_FILE, module.Opportunity)
+                            self.assertEqual(saved["missing"].refresh_status, "unavailable")
+                            self.assertIn("fresh", saved)
+                            self.assertIn("UNVERIFIED", Path("email_draft.txt").read_text())
+                            self.assertIn("missing", Path("email_draft.html").read_text())
+                        self.assertEqual(sum(p.get("noticeid") == "missing" for p in queries), 2)
+                        self.assertEqual(send.call_count, 2)
+                    finally:
+                        os.chdir(cwd)
+
+    def test_request_error_still_fails_and_preserves_state(self):
+        module = importlib.import_module("script_pest")
+        old = module.Opportunity("saved", "Saved", "", postedDate="2026-09-24")
+        with self.assertRaisesRegex(RuntimeError, "Could not refresh saved notice"):
+            refresh_saved_opportunities("key", {"saved": old}, dt.date(2026, 9, 29),
+                                       lambda *_: (_ for _ in ()).throw(RuntimeError("SAM API retryable error 429")),
+                                       module.normalize)
+        self.assertEqual(old.refresh_status, "current")
+
     def test_saved_description_survives_unavailable_detail_fetch(self):
         module = importlib.import_module("script_inspection_oilgas")
         old = module.Opportunity("id", "Inspection", "", postedDate="2026-09-24",
@@ -71,3 +115,4 @@ class RetainedScannerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

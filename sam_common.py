@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import time
+import copy
+import html
+import sys
 import json
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
@@ -53,8 +56,8 @@ def refresh_saved_opportunities(
 
     The public API requires posted-date bounds no wider than one year. Look
     newest first, then search older slices back through the original posting.
-    A missing ID or failed lookup withholds the report rather than dropping a
-    notice whose deadline might have been extended.
+    An empty successful lookup retains a clearly marked cached record for retry.
+    Request failures still stop the run so API/quota errors are not concealed.
     """
     refreshed: Dict[str, Any] = {}
     timings: list[Dict[str, Any]] = []
@@ -88,12 +91,13 @@ def refresh_saved_opportunities(
                 break
             end = start - timedelta(days=1)
         if found is None:
-            raise RuntimeError(f"Saved notice {notice_id} was not found during daily refresh; report withheld")
+            found = retain_unavailable_notice(old)
         refreshed[notice_id] = found
         total_calls += calls
         timings.append({"query": f"notice:{notice_id}",
                         "seconds": round(time.monotonic() - started, 3),
-                        "api_calls": calls, "items_returned": 1})
+                        "api_calls": calls, "items_returned": int(found.refresh_status != "unavailable"),
+                        "refresh_status": found.refresh_status})
     return refreshed, timings, total_calls
 
 
@@ -212,3 +216,32 @@ def write_runtime_metrics(
         json.dump(payload, handle, indent=2)
         handle.write("\n")
     return path
+
+
+
+def retain_unavailable_notice(old: Any) -> Any:
+    """Retain cached facts, including a possibly superseded deadline, for retry."""
+    retained = copy.deepcopy(old)
+    retained.refresh_status = "unavailable"
+    print(f"[WARN] Saved notice {old.noticeId}: refresh unavailable; retained last known record. "
+          "Status and deadline are unverified.", file=sys.stderr)
+    return retained
+
+
+def add_refresh_warning(text: str, html_body: str, opportunities: list[Any]) -> tuple[str, str]:
+    unavailable = [o for o in opportunities if o.refresh_status == "unavailable"]
+    if not unavailable:
+        return text, html_body
+    warning = (f"WARNING: {len(unavailable)} saved notice(s) could not be refreshed. "
+               "Their cached status and deadlines are UNVERIFIED; these are review items, "
+               "not confirmed open opportunities. They remain saved for daily retry.\n" +
+               "\n".join(f"- {o.title} | {o.noticeId} | last known deadline: "
+                          f"{o.responseDeadLine or 'not provided'}" for o in unavailable))
+    panel = '<div role="alert"><pre style="white-space:pre-wrap">' + html.escape(warning) + '</pre></div>'
+    # Insert inside the HTML body when available.
+    import re
+    result, count = re.subn(r'(<body\b[^>]*>)', lambda m: m.group(1) + panel,
+                           html_body, count=1, flags=re.IGNORECASE)
+    if not count:
+        result = panel + html_body
+    return warning + "\n\n" + text, result
