@@ -66,6 +66,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
+from sam_common import add_refresh_warning, retain_unavailable_notice
 from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
 
 # Optional SMTP (only used if SEND_EMAIL=1)
@@ -334,6 +335,7 @@ class Opportunity:
     state_bucket: Optional[str] = None   # which target state(s) this hit, "NC" or a catholic-only state
     is_nc: bool = False
     catholic_hits: List[str] = field(default_factory=list)
+    refresh_status: str = "current"
     why_matched: List[str] = field(default_factory=list)
     description_text: str = ""
     keyword_hits: List[str] = field(default_factory=list)
@@ -570,7 +572,7 @@ def refresh_saved_notice(api_key: str, old: Opportunity, today: dt.date) -> Tupl
             if item.get("noticeId") == old.noticeId:
                 return normalize(item), calls
         end = start - dt.timedelta(days=1)
-    raise RuntimeError(f"Saved notice {old.noticeId} was not found during daily refresh; report withheld")
+    return retain_unavailable_notice(old), calls
 
 
 def add_job_tag(opp: Opportunity, job_tag: str) -> None:
@@ -951,7 +953,8 @@ def build_html_email(top: List[Opportunity], shortlist: List[Opportunity], as_of
 
 def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
     return {
-        "rank_group": rank_group,
+        "rank_group": "REVIEW — refresh unavailable" if opp.refresh_status == "unavailable" else rank_group,
+        "refresh_status": opp.refresh_status,
         "score": round(float(opp.score or 0), 3),
         "feasibility": round(float(opp.feasibility or 0), 3),
         "is_nc": "Y" if opp.is_nc else "",
@@ -1139,20 +1142,22 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     query_timings: List[Dict[str, Any]] = []
 
     # Refresh first, even if the saved deadline has just elapsed: an amendment
-    # may have extended it. A failed/missing ID withholds the report instead
-    # of deleting a possibly extended opportunity.
+    # may have extended it. Empty lookups retain a flagged cached record;
+    # request errors still stop an incomplete run.
     for notice_id, old in carried.items():
         job_started = time.monotonic()
         refreshed, calls = refresh_saved_notice(api_key, old, today)
         total_calls += calls
         seen[notice_id] = refreshed
-        fresh_ids.add(notice_id)
+        if refreshed.refresh_status != "unavailable":
+            fresh_ids.add(notice_id)
         add_job_tag(refreshed, "daily-ID-refresh")
         query_timings.append({
             "query": f"notice:{notice_id}",
             "seconds": round(time.monotonic() - job_started, 3),
             "api_calls": calls,
-            "items_returned": 1,
+            "items_returned": int(refreshed.refresh_status != "unavailable"),
+            "refresh_status": refreshed.refresh_status,
         })
 
     for job_name, params in jobs:
@@ -1205,6 +1210,9 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     stats = {"in_scope": 0, "nc_total": 0, "nc_sdvosb": 0, "catholic_match": 0, "dropped_out_of_scope": 0}
 
     for opp in seen.values():
+        if opp.refresh_status == "unavailable":
+            scored.append(opp)
+            continue
         if not hard_filters_ok(opp, now=now):
             continue
         if opp.noticeId not in fresh_ids:
@@ -1234,14 +1242,15 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
         if opp.catholic_hits:
             stats["catholic_match"] += 1
 
-    scored.sort(key=lambda x: x.score, reverse=True)
+    scored.sort(key=lambda x: (x.refresh_status != "unavailable", x.score), reverse=True)
     save_state(scored)
 
-    top = scored[:TOP_MAX]
+    current_scored = [o for o in scored if o.refresh_status != "unavailable"]
+    top = current_scored[:TOP_MAX]
     if len(top) < TOP_MIN:
-        top = scored[:max(TOP_MIN, len(scored))]
+        top = current_scored[:max(TOP_MIN, len(current_scored))]
     top_ids = {o.noticeId for o in top}
-    remaining = [o for o in scored if o.noticeId not in top_ids]
+    remaining = [o for o in current_scored if o.noticeId not in top_ids]
     shortlist = remaining[:SHORTLIST_MAX]
     if len(shortlist) < SHORTLIST_MIN:
         shortlist = remaining[:max(SHORTLIST_MIN, len(remaining))]
@@ -1252,6 +1261,8 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
 
     email_text = build_email(top, shortlist, now, stats)
     email_html = build_html_email(top, shortlist, now, stats)
+
+    email_text, email_html = add_refresh_warning(email_text, email_html, scored)
 
     with open("email_draft.txt", "w", encoding="utf-8") as f:
         f.write(email_text)
@@ -1292,3 +1303,4 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
+
