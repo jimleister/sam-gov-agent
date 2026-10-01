@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   validate:
@@ -31,4 +32,16 @@ jobs:
           python -m py_compile sam_common.py script.py script_pest.py script_usace_asia.py script_inspection_oilgas.py script_catholic_southeast.py
 
       - name: Run offline tests
-        run: python -m unittest -v test_sam_common.py test_scanners.py
+        run: python -m unittest discover -v
+
+      - name: Preview all five watchlist migrations without SAM requests or email
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python preview_watchlist_migration.py
+
+      - name: Upload migration preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchlist-migration-preview
+          path: migration-preview/
+          retention-days: 30

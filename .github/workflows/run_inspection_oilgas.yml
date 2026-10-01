@@ -40,9 +40,8 @@ jobs:
           if [ -n "$artifact_id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > opportunity-state.zip
             unzip -oq opportunity-state.zip inspection_oilgas_opportunity_state.json
-          else
-            python bootstrap_opportunity_state.py run_inspection_oilgas.yml sam-results-inspection-oilgas- inspection_oilgas_opportunity_state.json
           fi
+          python bootstrap_opportunity_state.py run_inspection_oilgas.yml sam-results-inspection-oilgas- inspection_oilgas_opportunity_state.json
 
       - name: Run Inspection + Oil & Gas script
         env:
@@ -74,4 +73,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
           name: inspection-oilgas-opportunity-state
-          path: inspection_oilgas_opportunity_state.json
+          path: |
+            inspection_oilgas_opportunity_state.json
+            watchlist_migration_archive.json

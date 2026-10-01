@@ -40,9 +40,8 @@ jobs:
           if [ -n "$artifact_id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > opportunity-state.zip
             unzip -oq opportunity-state.zip logistics_opportunity_state.json
-          else
-            python bootstrap_opportunity_state.py run.yml sam-results- logistics_opportunity_state.json
           fi
+          python bootstrap_opportunity_state.py run.yml sam-results- logistics_opportunity_state.json
 
       - name: Run script
         env:
@@ -74,4 +73,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
           name: logistics-opportunity-state
-          path: logistics_opportunity_state.json
+          path: |
+            logistics_opportunity_state.json
+            watchlist_migration_archive.json

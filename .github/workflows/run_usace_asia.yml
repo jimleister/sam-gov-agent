@@ -40,9 +40,8 @@ jobs:
           if [ -n "$artifact_id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > opportunity-state.zip
             unzip -oq opportunity-state.zip usace_asia_opportunity_state.json
-          else
-            python bootstrap_opportunity_state.py run_usace_asia.yml sam-results-usace-asia- usace_asia_opportunity_state.json
           fi
+          python bootstrap_opportunity_state.py run_usace_asia.yml sam-results-usace-asia- usace_asia_opportunity_state.json
 
       - name: Run USACE + S/SE Asia script
         env:
@@ -74,4 +73,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
           name: usace-asia-opportunity-state
-          path: usace_asia_opportunity_state.json
+          path: |
+            usace_asia_opportunity_state.json
+            watchlist_migration_archive.json

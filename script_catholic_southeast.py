@@ -66,7 +66,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Tuple, Optional
 
 import requests
-from sam_common import add_refresh_warning, retain_unavailable_notice
+from sam_common import (add_refresh_warning, load_opportunity_state, save_opportunity_state,
+                        refresh_saved_opportunities, select_watchlist, reconcile_notice_versions)
 from sam_common import deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics
 
 # Optional SMTP (only used if SEND_EMAIL=1)
@@ -335,6 +336,9 @@ class Opportunity:
     state_bucket: Optional[str] = None   # which target state(s) this hit, "NC" or a catholic-only state
     is_nc: bool = False
     catholic_hits: List[str] = field(default_factory=list)
+    solicitationNumber: Optional[str] = None
+    explicitly_saved: bool = False
+    previous_notice_ids: List[str] = field(default_factory=list)
     refresh_status: str = "current"
     why_matched: List[str] = field(default_factory=list)
     description_text: str = ""
@@ -429,6 +433,7 @@ def normalize(item: Dict[str, Any]) -> Opportunity:
         title=item.get("title") or "",
         uiLink=item.get("uiLink") or "",
         postedDate=item.get("postedDate"),
+        solicitationNumber=item.get("solicitationNumber"),
         responseDeadLine=item.get("responseDeadLine") or item.get("responseDeadline"),
         type=item.get("type"),
         baseType=item.get("baseType"),
@@ -530,49 +535,16 @@ def hard_filters_ok(opp: Opportunity, now: dt.datetime) -> bool:
 
 
 def load_state(path: Path = STATE_FILE) -> Dict[str, Opportunity]:
-    if not path.exists():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("version") != 1 or not isinstance(data.get("opportunities"), list):
-        raise ValueError(f"Invalid Catholic opportunity state: {path}")
-    return {o.noticeId: o for raw in data["opportunities"]
-            for o in [Opportunity(**raw)] if o.noticeId}
+    return load_opportunity_state(path, Opportunity)
 
 
 def save_state(opportunities: List[Opportunity], path: Path = STATE_FILE) -> None:
-    payload = {"version": 1, "opportunities": [asdict(o) for o in opportunities]}
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(path)
+    save_opportunity_state(path, opportunities)
 
 
 def refresh_saved_notice(api_key: str, old: Opportunity, today: dt.date) -> Tuple[Opportunity, int]:
-    """Look up one saved ID in one-year posted-date slices, newest first.
-
-    A notice can be amended after its original posting. Search the current
-    year first, then older slices back through the saved posting date.
-    Never assume the cached response deadline is still final.
-    """
-    try:
-        posted = dt.date.fromisoformat((old.postedDate or "")[:10])
-    except ValueError:
-        posted = today - dt.timedelta(days=364)
-    calls = 0
-    end = today
-    while end >= posted:
-        start = max(posted, end - dt.timedelta(days=364))
-        params = {"postedFrom": mmddyyyy(start), "postedTo": mmddyyyy(end),
-                  "noticeid": old.noticeId, "limit": 10, "offset": 0}
-        try:
-            data = sam_search(api_key, params)
-        except Exception as e:
-            raise RuntimeError(f"Could not refresh saved notice {old.noticeId}") from e
-        calls += 1
-        for item in data.get("opportunitiesData") or []:
-            if item.get("noticeId") == old.noticeId:
-                return normalize(item), calls
-        end = start - dt.timedelta(days=1)
-    return retain_unavailable_notice(old), calls
+    refreshed, _, calls = refresh_saved_opportunities(api_key, {old.noticeId: old}, today, sam_search, normalize)
+    return refreshed[old.noticeId], calls
 
 
 def add_job_tag(opp: Opportunity, job_tag: str) -> None:
@@ -981,6 +953,10 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "evidence": " | ".join(opp.evidence),
         "next_step": opp.next_step,
         "notice_id": opp.noticeId,
+        "solicitation_number": opp.solicitationNumber or "",
+        "agency_office_code": opp.fullParentPathCode or "",
+        "explicitly_saved": opp.explicitly_saved,
+        "previous_notice_ids": ";".join(opp.previous_notice_ids),
         "sam_link": opp.uiLink,
         "attachment_count": len(opp.resourceLinks or []),
     }
@@ -1206,6 +1182,7 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
         if len(seen) >= MAX_TOTAL_DEDUPED:
             raise RuntimeError("Catholic scan truncated: candidate limit reached")
 
+    carried = reconcile_notice_versions(seen, carried)
     scored: List[Opportunity] = []
     stats = {"in_scope": 0, "nc_total": 0, "nc_sdvosb": 0, "catholic_match": 0, "dropped_out_of_scope": 0}
 
@@ -1243,7 +1220,6 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
             stats["catholic_match"] += 1
 
     scored.sort(key=lambda x: (x.refresh_status != "unavailable", x.score), reverse=True)
-    save_state(scored)
 
     current_scored = [o for o in scored if o.refresh_status != "unavailable"]
     top = current_scored[:TOP_MAX]
@@ -1277,6 +1253,7 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     )
     attachments = [p for p in [xlsx_path, csv_path] if p]
     send_email(subject, email_text, html_body=email_html, attachments=attachments)
+    save_state(select_watchlist(scored, carried, top + shortlist))
 
     print(f"[INFO] Wrote spreadsheet files: {', '.join(attachments)}", file=sys.stderr)
     print(
@@ -1303,4 +1280,3 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
-

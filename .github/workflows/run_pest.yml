@@ -40,9 +40,8 @@ jobs:
           if [ -n "$artifact_id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > opportunity-state.zip
             unzip -oq opportunity-state.zip pest_opportunity_state.json
-          else
-            python bootstrap_opportunity_state.py run_pest.yml sam-results-pest- pest_opportunity_state.json
           fi
+          python bootstrap_opportunity_state.py run_pest.yml sam-results-pest- pest_opportunity_state.json
 
       - name: Run pest/vector script
         env:
@@ -74,4 +73,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
           name: pest-opportunity-state
-          path: pest_opportunity_state.json
+          path: |
+            pest_opportunity_state.json
+            watchlist_migration_archive.json

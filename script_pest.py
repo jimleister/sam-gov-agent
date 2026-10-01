@@ -52,7 +52,8 @@ import requests
 from sam_common import add_refresh_warning, retain_unavailable_notice
 from sam_common import (deadline_urgency_flag, sam_search_with_retry, write_runtime_metrics,
                         load_opportunity_state, save_opportunity_state,
-                        refresh_saved_opportunities, response_deadline_open)
+                        refresh_saved_opportunities, response_deadline_open,
+                        select_watchlist, reconcile_notice_versions)
 
 # Optional SMTP (only used if SEND_EMAIL=1)
 import smtplib
@@ -446,6 +447,9 @@ class Opportunity:
     typeOfSetAsideDescription: Optional[str] = None
 
     # derived
+    solicitationNumber: Optional[str] = None
+    explicitly_saved: bool = False
+    previous_notice_ids: List[str] = field(default_factory=list)
     refresh_status: str = "current"
     why_matched: List[str] = field(default_factory=list)
     description_text: str = ""
@@ -513,6 +517,7 @@ def normalize(item: Dict[str, Any]) -> Opportunity:
         title=item.get("title") or "",
         uiLink=item.get("uiLink") or "",
         postedDate=item.get("postedDate"),
+        solicitationNumber=item.get("solicitationNumber"),
         responseDeadLine=item.get("responseDeadLine") or item.get("responseDeadline"),
         type=item.get("type"),
         baseType=item.get("baseType"),
@@ -1019,6 +1024,10 @@ def opp_to_row(opp: Opportunity, rank_group: str = "") -> Dict[str, Any]:
         "evidence": " | ".join(opp.evidence),
         "next_step": opp.next_step,
         "notice_id": opp.noticeId,
+        "solicitation_number": opp.solicitationNumber or "",
+        "agency_office_code": opp.fullParentPathCode or "",
+        "explicitly_saved": opp.explicitly_saved,
+        "previous_notice_ids": ";".join(opp.previous_notice_ids),
         "sam_link": opp.uiLink,
         "attachment_count": len(opp.resourceLinks or []),
     }
@@ -1314,6 +1323,7 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
         if len(seen) >= MAX_TOTAL_DEDUPED:
             raise RuntimeError("Pest scan truncated: candidate limit reached")
 
+    saved = reconcile_notice_versions(seen, saved)
     scored: List[Opportunity] = []
     for opp in seen.values():
         if opp.refresh_status == "unavailable":
@@ -1352,7 +1362,6 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
         scored.append(opp)
 
     scored.sort(key=lambda x: (x.refresh_status != "unavailable", x.score), reverse=True)
-    save_opportunity_state(STATE_FILE, scored)
 
     current_scored = [o for o in scored if o.refresh_status != "unavailable"]
     top = current_scored[:TOP_MAX]
@@ -1387,6 +1396,7 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
     subject = f"Pest/Vector Management Daily Opportunities ({len(scored)} matches | {len(top)} high priority) — {now:%b %d, %Y}"
     attachments = [p for p in [xlsx_path, csv_path] if p]
     send_email(subject, email_text, html_body=email_html, attachments=attachments)
+    save_opportunity_state(STATE_FILE, select_watchlist(scored, saved, top + shortlist))
 
     print(f"[INFO] Wrote spreadsheet files: {', '.join(attachments)}", file=sys.stderr)
 
@@ -1410,4 +1420,3 @@ def run(as_of: Optional[dt.datetime] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run())
-
