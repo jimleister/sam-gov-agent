@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Seed a scanner's watchlist from its still-retained historical CSV artifacts.
 
-This runs only when a workflow has no saved state. It uses GitHub's own token,
-not the SAM.gov key, and the scanner refreshes each seeded ID before reporting.
+Also migrates legacy full-result state to reported/explicit saves. Uses GitHub's
+token, never the SAM.gov key. Existing state is preserved if migration fails.
 """
 import csv
 import io
@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
+from sam_common import WATCHLIST_SCOPE
 
 
 def api_json(url: str, token: str) -> dict:
@@ -45,6 +46,8 @@ def artifact_csv_rows(url: str, token: str) -> list[dict]:
 
 
 def open_seed(row: dict, now: datetime) -> dict | None:
+    if row.get("rank_group") not in ("Top", "Shortlist") and str(row.get("explicitly_saved", "")).lower() != "true":
+        return None
     notice_id = (row.get("notice_id") or "").strip()
     if not notice_id:
         return None
@@ -60,16 +63,30 @@ def open_seed(row: dict, now: datetime) -> dict | None:
             return None
     return {"noticeId": notice_id, "title": row.get("title") or "",
             "uiLink": row.get("sam_link") or "", "postedDate": row.get("posted_date") or None,
-            "responseDeadLine": deadline or None, "active": "Yes"}
+            "responseDeadLine": deadline or None, "active": "Yes",
+            "solicitationNumber": row.get("solicitation_number") or None,
+            "fullParentPathCode": row.get("agency_office_code") or None,
+            "fullParentPathName": row.get("agency_office") or None,
+            "explicitly_saved": str(row.get("explicitly_saved", "")).lower() == "true"}
 
 
 def bootstrap(workflow: str, prefix: str, output: Path) -> int:
+    previous = {}
+    if output.exists():
+        data = json.loads(output.read_text(encoding="utf-8"))
+        if data.get("version") != 1 or not isinstance(data.get("opportunities"), list):
+            raise ValueError(f"Invalid opportunity state: {output}")
+        if data.get("watchlist_scope") == WATCHLIST_SCOPE:
+            return len(data["opportunities"])
+        previous = {o["noticeId"]: o for o in data["opportunities"]}
     token = os.environ["GH_TOKEN"]
     repo = os.environ["GITHUB_REPOSITORY"]
     root = f"https://api.github.com/repos/{repo}/actions"
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=30)
-    saved: dict[str, dict] = {}
+    saved: dict[str, dict] = {key: value for key, value in previous.items() if value.get("explicitly_saved") is True}
+    observed = set()
+    report_artifacts = 0
     page = 1
     while True:
         url = (f"{root}/workflows/{quote(workflow, safe='')}/runs?branch=main"
@@ -85,16 +102,34 @@ def bootstrap(workflow: str, prefix: str, output: Path) -> int:
             for artifact in artifacts:
                 if artifact.get("expired") or not artifact.get("name", "").startswith(prefix):
                     continue
+                report_artifacts += 1
                 for row in artifact_csv_rows(artifact["archive_download_url"], token):
+                    if row.get("rank_group") in ("Top", "Shortlist") or str(row.get("explicitly_saved", "")).lower() == "true":
+                        observed.add(row.get("notice_id"))
                     seed = open_seed(row, now)
-                    if seed and seed["noticeId"] not in saved:
-                        saved[seed["noticeId"]] = seed
+                    if seed:
+                        if seed["noticeId"] not in saved:
+                            # Preserve richer cached facts, including unavailable refresh status.
+                            saved[seed["noticeId"]] = previous.get(seed["noticeId"], seed)
         if len(runs) < 100 or datetime.fromisoformat(runs[-1]["created_at"].replace("Z", "+00:00")) < cutoff:
             break
         page += 1
-    output.write_text(json.dumps({"version": 1, "opportunities": list(saved.values())},
-                                 ensure_ascii=False), encoding="utf-8")
-    print(f"Seeded {len(saved)} open IDs from retained {workflow} reports")
+    if previous and not report_artifacts:
+        raise RuntimeError("Cannot migrate legacy state without retained report artifacts; original state preserved")
+    if workflow == "run_catholic_southeast.yml" and not previous and not report_artifacts:
+        # Leave first-run detection intact so NC still gets its initial backfill.
+        return 0
+    if previous:
+        # Previously reported missing IDs remain review items even after a cached deadline.
+        for key, value in previous.items():
+            if key in observed or value.get("explicitly_saved") is True:
+                saved[key] = value
+        Path("watchlist_migration_archive.json").write_text(output.read_text(encoding="utf-8"), encoding="utf-8")
+    temporary = output.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"version": 1, "watchlist_scope": WATCHLIST_SCOPE,
+                                    "opportunities": list(saved.values())}, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(output)
+    print(f"Reported/explicit watchlist: {len(saved)} IDs (legacy pool: {len(previous)}); no SAM calls used")
     return len(saved)
 
 

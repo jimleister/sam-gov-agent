@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Tuple
 import requests
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+WATCHLIST_SCOPE = "reported-or-explicit-v1"
 
 
 def load_opportunity_state(path: Path, opportunity_type: type) -> Dict[str, Any]:
@@ -21,16 +22,72 @@ def load_opportunity_state(path: Path, opportunity_type: type) -> Dict[str, Any]
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("version") != 1 or not isinstance(data.get("opportunities"), list):
         raise ValueError(f"Invalid opportunity state: {path}")
+    if data.get("watchlist_scope") != WATCHLIST_SCOPE:
+        raise ValueError(f"Legacy full-result state requires bootstrap_opportunity_state.py migration: {path}")
     return {o.noticeId: o for raw in data["opportunities"]
             for o in [opportunity_type(**raw)] if o.noticeId}
 
 
 def save_opportunity_state(path: Path, opportunities: list[Any]) -> None:
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"version": 1,
+    temporary.write_text(json.dumps({"version": 1, "watchlist_scope": WATCHLIST_SCOPE,
                                      "opportunities": [asdict(o) for o in opportunities]},
                                     ensure_ascii=False), encoding="utf-8")
     temporary.replace(path)
+
+
+def select_watchlist(scored: list[Any], previous: Dict[str, Any], reported: list[Any]) -> list[Any]:
+    """Track prior reported/explicit saves until confirmed closed, plus today's report."""
+    ids = set(previous) | {o.noticeId for o in reported}
+    return [o for o in scored if o.noticeId in ids or o.explicitly_saved]
+
+
+def successor_matches(old: Any, new: Any) -> bool:
+    """Never reconnect versions on title alone."""
+    if old.noticeId == new.noticeId or new.refresh_status != "current":
+        return False
+    if not old.fullParentPathCode or old.fullParentPathCode != new.fullParentPathCode:
+        return False
+    if not new.postedDate or not old.postedDate or new.postedDate <= old.postedDate:
+        return False
+    if old.type and new.type and old.type != new.type:
+        return False
+    if old.solicitationNumber:
+        return old.solicitationNumber == new.solicitationNumber
+    # Legacy records lack solicitation numbers. Require multiple shared original attachments.
+    return bool(old.title and old.title == new.title and
+                len(set(old.resourceLinks) & set(new.resourceLinks)) >= 2)
+
+
+def reconcile_notice_versions(seen: Dict[str, Any], previous: Dict[str, Any]) -> Dict[str, Any]:
+    """Move tracking to an unambiguous newer version already obtained by discovery."""
+    tracked = dict(previous)
+    for notice_id, old in previous.items():
+        current = seen.get(notice_id)
+        if current is not None:
+            current.explicitly_saved = current.explicitly_saved or old.explicitly_saved
+            current.previous_notice_ids = list(dict.fromkeys(current.previous_notice_ids + old.previous_notice_ids))
+            current.solicitationNumber = current.solicitationNumber or old.solicitationNumber
+    proposals = {}
+    for notice_id, old in previous.items():
+        current = seen.get(notice_id)
+        if current is None or current.refresh_status != "unavailable":
+            continue
+        matches = [o for o in seen.values() if successor_matches(old, o)]
+        if len(matches) == 1:
+            proposals[notice_id] = matches[0]
+    targets = [o.noticeId for o in proposals.values()]
+    for notice_id, new in proposals.items():
+        if targets.count(new.noticeId) != 1:
+            continue
+        old = previous[notice_id]
+        new.previous_notice_ids = list(dict.fromkeys(new.previous_notice_ids + old.previous_notice_ids + [notice_id]))
+        new.explicitly_saved = new.explicitly_saved or old.explicitly_saved
+        tracked.pop(notice_id, None)
+        tracked[new.noticeId] = new
+        seen.pop(notice_id, None)
+        print(f"[INFO] Saved notice {notice_id}: tracking verified newer notice {new.noticeId}")
+    return tracked
 
 
 def response_deadline_open(deadline: Any, now: datetime) -> bool:
@@ -86,6 +143,9 @@ def refresh_saved_opportunities(
                     found = normalize(item)
                     if not found.description_text:
                         found.description_text = old.description_text
+                    found.explicitly_saved = old.explicitly_saved
+                    found.previous_notice_ids = old.previous_notice_ids
+                    found.solicitationNumber = found.solicitationNumber or old.solicitationNumber
                     break
             if found is not None:
                 break
@@ -134,6 +194,15 @@ def sam_search_with_retry(
                     raise RuntimeError("SAM API returned invalid JSON") from exc
 
             snippet = (response.text or "")[:500].replace("\n", " ")
+            if response.status_code == 429:
+                try:
+                    quota = response.json()
+                except ValueError:
+                    quota = {}
+                if isinstance(quota, dict) and quota.get("nextAccessTime"):
+                    # A daily quota cannot recover during short backoff retries.
+                    raise RuntimeError("SAM daily API quota exhausted; next access: " +
+                                       str(quota["nextAccessTime"])[:100])
             if response.status_code not in RETRYABLE_STATUS:
                 raise RuntimeError(f"SAM API error {response.status_code}: {snippet}")
 

@@ -41,6 +41,7 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > catholic-state.zip
             unzip -oq catholic-state.zip catholic_opportunity_state.json
           fi
+          python bootstrap_opportunity_state.py run_catholic_southeast.yml sam-results-catholic-southeast- catholic_opportunity_state.json
 
       - name: Run Catholic Southeast + NC script
         env:
@@ -72,4 +73,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
           name: catholic-opportunity-state
-          path: catholic_opportunity_state.json
+          path: |
+            catholic_opportunity_state.json
+            watchlist_migration_archive.json

@@ -44,11 +44,12 @@ class BootstrapTests(unittest.TestCase):
 
         def csv_rows(url, _token):
             if url.endswith("/2"):
-                return [{"notice_id": "same", "title": "Extended", "posted_date": "2026-09-01",
+                return [{"rank_group": "Top", "notice_id": "same", "title": "Extended", "posted_date": "2026-09-01",
                          "response_deadline": future},
-                        {"notice_id": "expired", "title": "Past", "response_deadline": past}]
-            return [{"notice_id": "same", "title": "Old title", "response_deadline": future},
-                    {"notice_id": "another", "title": "Open", "response_deadline": future}]
+                        {"rank_group": "Top", "notice_id": "expired", "title": "Past", "response_deadline": past}]
+            return [{"rank_group": "Top", "notice_id": "same", "title": "Old title", "response_deadline": future},
+                    {"rank_group": "Shortlist", "notice_id": "another", "title": "Open", "response_deadline": future},
+                    {"rank_group": "All Matches", "notice_id": "background", "title": "Archive only", "response_deadline": future}]
 
         with tempfile.TemporaryDirectory() as directory, \
              patch.dict(os.environ, {"GH_TOKEN": "test", "GITHUB_REPOSITORY": "owner/repo"}), \
