@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "notice_id",
+    "draft_id",
+    "solicitation_understanding",
+    "compliance",
+    "technical_response",
+    "capability_accuracy",
+    "factual_accuracy",
+    "usefulness",
+    "editing_minutes"
+  ],
+  "properties": {
+    "notice_id": {
+      "type": "string"
+    },
+    "draft_id": {
+      "type": "string"
+    },
+    "agent": {
+      "enum": [
+        "open-strix",
+        "hermes"
+      ]
+    },
+    "solicitation_understanding": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "compliance": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "technical_response": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "capability_accuracy": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "factual_accuracy": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "usefulness": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "editing_minutes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "corrections": {
+      "type": "string"
+    },
+    "rated_at": {
+      "type": "string"
+    }
+  }
+}
