@@ -284,7 +284,8 @@ class TransactionTests(unittest.TestCase):
             state = Path(d) / "state.json"
             before = json.dumps({"version": 1, "notices": {}, "last_success": "2026-10-28T00:00:00Z"})
             state.write_text(before)
-            with patch.object(s, "SamClient"), patch.object(s, "discover", return_value={}), patch.object(s, "email_report", side_effect=RuntimeError("SMTP failed")):
+            fake_client = Mock(calls=0, queries=[])
+            with patch.object(s, "SamClient", return_value=fake_client), patch.object(s, "discover", return_value={}), patch.object(s, "email_report", side_effect=RuntimeError("SMTP failed")):
                 code = s.main(["--state", str(state), "--output", str(Path(d) / "out")])
             self.assertEqual(code, 1)
             self.assertEqual(state.read_text(), before)
@@ -292,7 +293,8 @@ class TransactionTests(unittest.TestCase):
 
     def test_failed_scan_does_not_send_email(self):
         with tempfile.TemporaryDirectory() as d:
-            with patch.object(s, "SamClient"), patch.object(s, "discover", side_effect=RuntimeError("SAM quota")), patch.object(s, "email_report") as sender:
+            fake_client = Mock(calls=0, queries=[])
+            with patch.object(s, "SamClient", return_value=fake_client), patch.object(s, "discover", side_effect=RuntimeError("SAM quota")), patch.object(s, "email_report") as sender:
                 code = s.main(["--state", str(Path(d) / "state.json"), "--output", str(Path(d) / "out")])
             self.assertEqual(code, 1)
             sender.assert_not_called()
