@@ -195,7 +195,11 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
 
     def test_all_five_workflows_migrate_after_restore_and_ci_runs_full_suite(self):
-        for path in Path(".github/workflows").glob("run*.yml"):
+        # Only these legacy scanners have a full-pool state requiring migration.
+        # A new independently versioned scanner must not inherit that migration.
+        # Enumerating the required paths also fails if a legacy workflow is removed.
+        for scanner in SCANNERS:
+            path = Path(".github/workflows") / ("run" + scanner[len("script"):] + ".yml")
             workflow = path.read_text()
             restore = workflow.split("      - name: Run ")[0]
             self.assertIn("          fi\n          python bootstrap_opportunity_state.py", restore)

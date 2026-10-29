@@ -1,0 +1,14 @@
+{
+  "sdvosb_status": "user-confirmed; verify active SBA certification before offer",
+  "hubzone_certified": false,
+  "include_adjacent_naics": true,
+  "discovery_days": 7,
+  "initial_days": 90,
+  "max_api_calls": 220,
+  "max_pages_per_query": 40,
+  "description_limit": 45,
+  "top_per_lane": 5,
+  "max_highlights": 10,
+  "preferred_states": ["NC", "SC", "VA", "CO", "PA"],
+  "email_to": "jleister@westontrolley.com"
+}

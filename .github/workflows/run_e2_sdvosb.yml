@@ -1,0 +1,141 @@
+name: SAM.gov - Weston + E2 / SDVOSB
+
+on:
+  schedule:
+    - cron: '17 8 * * *'
+      timezone: America/New_York
+  workflow_dispatch:
+    inputs:
+      send_email:
+        description: Send the live report using existing SMTP secrets
+        type: boolean
+        default: true
+      demo:
+        description: Synthetic demo only (no SAM calls or email)
+        type: boolean
+        default: false
+  push:
+    branches: [main, e2-sdvosb-daily-report]
+    paths:
+      - script_e2_sdvosb.py
+      - e2_sdvosb_config.json
+      - test_e2_sdvosb.py
+      - examples/e2_sdvosb_demo.json
+      - E2_SDVOSB_README.md
+      - .github/workflows/run_e2_sdvosb.yml
+  pull_request:
+    paths:
+      - script_e2_sdvosb.py
+      - e2_sdvosb_config.json
+      - test_e2_sdvosb.py
+      - examples/e2_sdvosb_demo.json
+      - E2_SDVOSB_README.md
+      - .github/workflows/run_e2_sdvosb.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: e2-sdvosb-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: pip
+      - name: Install existing dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Offline tests - no credentials and no email
+        env:
+          SEND_EMAIL: '0'
+        run: python -m unittest test_e2_sdvosb -v
+      - name: Generate synthetic demonstration
+        env:
+          SEND_EMAIL: '0'
+        run: python script_e2_sdvosb.py --demo --output e2_sdvosb_demo_output
+      - name: Package implementation
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile, ZIP_DEFLATED
+          files = ["script_e2_sdvosb.py", "e2_sdvosb_config.json", "test_e2_sdvosb.py",
+                   "requirements.txt", "examples/e2_sdvosb_demo.json", "E2_SDVOSB_README.md",
+                   ".github/workflows/run_e2_sdvosb.yml"]
+          with ZipFile("e2_sdvosb_package.zip", "w", ZIP_DEFLATED) as archive:
+              for path in files:
+                  archive.write(path, arcname=path)
+          with ZipFile("e2_sdvosb_package.zip") as archive:
+              assert set(archive.namelist()) == set(files)
+          PY
+      - name: Upload validation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2-sdvosb-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            e2_sdvosb_demo_output/
+            e2_sdvosb_package.zip
+
+  daily-report:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    concurrency:
+      group: e2-sdvosb-production-state
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+          cache: pip
+      - name: Install existing dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Restore independent E2 watchlist
+        if: inputs.demo != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=e2-sdvosb-opportunity-state&per_page=100" --jq '[.[].artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")] | sort_by(.created_at) | reverse | .[0].id // empty')
+          if [ -n "$artifact_id" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/e2-state.zip"
+            unzip -p "$RUNNER_TEMP/e2-state.zip" e2_sdvosb_state.json > e2_sdvosb_state.json
+          fi
+      - name: Draft and optionally send report
+        env:
+          SAM_API_KEY: ${{ secrets.SAM_API_KEY }}
+          SEND_EMAIL: ${{ (github.event_name == 'schedule' || inputs.send_email) && !inputs.demo && '1' || '0' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python script_e2_sdvosb.py ${{ inputs.demo && '--demo' || '' }}
+      - name: Upload report and diagnostic files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sam-results-e2-sdvosb-${{ github.run_number }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: e2_sdvosb_output/
+      - name: Persist successful watchlist
+        if: success() && inputs.demo != true
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2-sdvosb-opportunity-state
+          retention-days: 30
+          if-no-files-found: error
+          path: e2_sdvosb_state.json

@@ -1,0 +1,60 @@
+[
+  {
+    "noticeId": "demo-e2-inspection-001",
+    "title": "SYNTHETIC DEMO - VA construction inspection and project controls",
+    "solicitationNumber": "DEMO-NOT-A-REAL-SOLICITATION-01",
+    "fullParentPathName": "VETERANS AFFAIRS, DEPARTMENT OF.TEST OFFICE",
+    "fullParentPathCode": "DEMO.VA.01",
+    "type": "Solicitation",
+    "naicsCode": "541350",
+    "typeOfSetAside": "SDVOSBC",
+    "typeOfSetAsideDescription": "Service-Disabled Veteran-Owned Small Business Set Aside",
+    "active": "Yes",
+    "placeOfPerformance": {"city": {"name": "Fayetteville"}, "state": {"code": "NC"}, "country": {"code": "USA"}},
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Construction inspection, coating inspection, project controls and quality assurance for a medical-campus utility project. The prime/subcontract delivery structure will be developed by the team. No budget, award or incumbent is represented."
+  },
+  {
+    "noticeId": "demo-e2-facilities-002",
+    "title": "SYNTHETIC DEMO - VA facilities support market research",
+    "solicitationNumber": "DEMO-NOT-A-REAL-SOLICITATION-02",
+    "fullParentPathName": "VETERANS AFFAIRS, DEPARTMENT OF.TEST OFFICE",
+    "fullParentPathCode": "DEMO.VA.02",
+    "type": "Sources Sought",
+    "naicsCode": "561210",
+    "active": "Yes",
+    "placeOfPerformance": {"state": {"code": "VA"}, "country": {"code": "USA"}},
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Sources sought to assess capabilities for facilities support, utility systems operations, preventive maintenance and environmental compliance. This is not a solicitation and no set-aside decision is represented."
+  },
+  {
+    "noticeId": "demo-e2-hubzone-003",
+    "title": "SYNTHETIC DEMO - HUBZone environmental assessment",
+    "fullParentPathName": "ENVIRONMENTAL PROTECTION AGENCY.TEST OFFICE",
+    "fullParentPathCode": "DEMO.EPA.01",
+    "type": "Solicitation",
+    "naicsCode": "541620",
+    "typeOfSetAside": "HZC",
+    "active": "Yes",
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Environmental assessment restricted to eligible HUBZone contractors. This example is separated because Weston's HUBZone certification is not established, not because of assumed delivery capacity."
+  },
+  {
+    "noticeId": "demo-e2-wexmac-004",
+    "title": "SYNTHETIC DEMO - WEXMAC facilities logistics public notice",
+    "fullParentPathName": "DEPT OF DEFENSE.DEPT OF THE NAVY.TEST OFFICE",
+    "fullParentPathCode": "DEMO.NAVY.01",
+    "type": "Special Notice",
+    "naicsCode": "561210",
+    "active": "Yes",
+    "placeOfPerformance": {"state": {"code": "GU"}, "country": {"code": "USA"}},
+    "description_text": "SYNTHETIC EXAMPLE ONLY. WEXMAC logistics support and facilities maintenance planning. A public notice does not establish access to a holder-only task order or TITUS region. Check the actual awarded vehicle and ordering instructions."
+  },
+  {
+    "noticeId": "demo-e2-clinical-005",
+    "title": "SYNTHETIC DEMO - clinical staffing specialist-team review",
+    "fullParentPathName": "VETERANS AFFAIRS, DEPARTMENT OF.TEST OFFICE",
+    "type": "Solicitation",
+    "naicsCode": "561320",
+    "typeOfSetAside": "SDVOSBC",
+    "active": "Yes",
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Clinical staffing, registered nurse and physician services. Retain for specialist-team review; this does not establish that E2 or Weston currently has clinical personnel. Additional qualified partners may be needed."
+  }
+]
