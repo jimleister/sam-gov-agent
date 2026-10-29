@@ -11,7 +11,7 @@
     "typeOfSetAsideDescription": "Service-Disabled Veteran-Owned Small Business Set Aside",
     "active": "Yes",
     "placeOfPerformance": {"city": {"name": "Fayetteville"}, "state": {"code": "NC"}, "country": {"code": "USA"}},
-    "description_text": "SYNTHETIC EXAMPLE ONLY. Construction inspection, coating inspection, project controls and quality assurance for a medical-campus utility project. Define a substantive prime delivery team and separately scoped technical subcontract. No budget, award or incumbent is represented."
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Construction inspection, coating inspection, project controls and quality assurance for a medical-campus utility project. The prime/subcontract delivery structure will be developed by the team. No budget, award or incumbent is represented."
   },
   {
     "noticeId": "demo-e2-facilities-002",
@@ -34,7 +34,7 @@
     "naicsCode": "541620",
     "typeOfSetAside": "HZC",
     "active": "Yes",
-    "description_text": "SYNTHETIC EXAMPLE ONLY. Environmental assessment restricted to eligible HUBZone contractors. This example should be blocked because Weston's HUBZone certification is not established."
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Environmental assessment restricted to eligible HUBZone contractors. This example is separated because Weston's HUBZone certification is not established, not because of assumed delivery capacity."
   },
   {
     "noticeId": "demo-e2-wexmac-004",
@@ -49,12 +49,12 @@
   },
   {
     "noticeId": "demo-e2-clinical-005",
-    "title": "SYNTHETIC DEMO - clinical staffing excluded",
+    "title": "SYNTHETIC DEMO - clinical staffing specialist-team review",
     "fullParentPathName": "VETERANS AFFAIRS, DEPARTMENT OF.TEST OFFICE",
     "type": "Solicitation",
     "naicsCode": "561320",
     "typeOfSetAside": "SDVOSBC",
     "active": "Yes",
-    "description_text": "SYNTHETIC EXAMPLE ONLY. Clinical staffing, registered nurse and physician services. The broad staffing NAICS does not make this an established E2/Weston delivery fit."
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Clinical staffing, registered nurse and physician services. Retain for specialist-team review; this does not establish that E2 or Weston currently has clinical personnel. Additional qualified partners may be needed."
   }
 ]
