@@ -1,0 +1,27 @@
+name: One-time E2 inbox report trigger
+
+on:
+  push:
+    branches: [e2-inbox-run-20261029]
+    paths: [.github/workflows/e2_inbox_dispatch_once.yml]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: e2-inbox-dispatch-20261029
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/e2-inbox-run-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Run the existing main-branch report with real data and email enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run run_e2_sdvosb.yml --repo "$GITHUB_REPOSITORY" --ref main -f send_email=true -f demo=false
+          echo "Requested the existing main-branch E2 workflow with send_email=true and demo=false."
