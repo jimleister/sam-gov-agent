@@ -9,7 +9,6 @@
   "description_limit": 45,
   "top_per_lane": 5,
   "max_highlights": 10,
-  "minimum_report_score": 55,
   "preferred_states": ["NC", "SC", "VA", "CO", "PA"],
   "email_to": "jleister@westontrolley.com"
 }
