@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -114,13 +114,20 @@ class FeasibilityTests(unittest.TestCase):
     def test_description_absence_capped(self):
         self.assertLessEqual(self.assess(description_text="")["score"], 64)
 
-    def test_clearance_or_vehicle_capped(self):
+    def test_clearance_or_vehicle_are_review_notes_without_penalty(self):
         for term in ["facility clearance", "gsa schedule", "contract holders only"]:
             with self.subTest(term=term):
-                self.assertLessEqual(self.assess(description_text="Construction inspection; " + term)["score"], 59)
+                base = self.assess(description_text="Construction inspection")
+                row = self.assess(description_text="Construction inspection; " + term)
+                self.assertEqual(row["score"], base["score"])
+                self.assertFalse(row["blockers"])
+                self.assertGreater(len(row["risks"]), len(base["risks"]))
 
-    def test_clinical_staffing_excluded(self):
-        self.assertEqual(self.assess(naicsCode="561320", description_text="Clinical staffing and physician services")["score"], 0)
+    def test_clinical_staffing_retained_for_specialist_teaming(self):
+        row = self.assess(naicsCode="561320", description_text="Clinical staffing and physician services")
+        self.assertGreater(row["score"], 0)
+        self.assertFalse(row["blockers"])
+        self.assertTrue(any("qualified team" in risk for risk in row["risks"]))
 
     def test_workshare_depends_on_contract_industry(self):
         self.assertIn("85%", s.workshare("236220"))
@@ -135,10 +142,44 @@ class FeasibilityTests(unittest.TestCase):
         self.assertEqual(row["lane"], "Unverified saved notices")
         self.assertFalse(any("deadline passed" in b for b in row["blockers"]))
 
-    def test_complex_execution_downgraded(self):
+    def test_complex_execution_retained_without_capacity_penalty(self):
         base = self.assess()
         difficult = self.assess(description_text="Construction inspection, quality assurance, project controls, 24/7, multi-site, infection control, performance bond.")
-        self.assertLess(difficult["score"], base["score"])
+        self.assertEqual(difficult["score"], base["score"])
+        self.assertFalse(difficult["blockers"])
+        self.assertGreater(len(difficult["risks"]), len(base["risks"]))
+
+    def test_every_registered_industry_remains_a_candidate(self):
+        for code in s.REGISTERED:
+            with self.subTest(code=code):
+                row = self.assess(naicsCode=code, title="General procurement", description_text="Detailed scope in attachments")
+                self.assertGreater(row["score"], 0)
+                self.assertFalse(row["blockers"])
+                self.assertGreater(row["score"], 54)
+
+    def test_no_standalone_execution_proxy_in_score(self):
+        row = self.assess()
+        self.assertNotIn("execution_proxy_20", row["components"])
+        self.assertIn("team_scope_fit_50", row["components"])
+        self.assertEqual(row["score"], sum(row["components"].values()))
+
+    def test_large_contract_not_excluded(self):
+        base = self.assess()
+        large = self.assess(description_text="Construction inspection, quality assurance and project controls. Estimated $100 million; nationwide, multi-site, 24/7; performance bond; facility clearance.")
+        self.assertEqual(large["score"], base["score"])
+        self.assertFalse(large["blockers"])
+
+    def test_licensing_workshare_and_staffing_do_not_downgrade(self):
+        base = self.assess()
+        row = self.assess(description_text="Construction inspection, quality assurance and project controls; professional engineer, SF330, performance bond, payment bond, infection control; primary and vital work; staff augmentation; 50% subcontracting limit.")
+        self.assertEqual(row["score"], base["score"])
+        self.assertFalse(row["blockers"])
+
+    def test_unknown_specialty_not_assumed_impossible(self):
+        row = self.assess(naicsCode="999999", title="Specialty opportunity", description_text="Review attached scope")
+        self.assertGreater(row["score"], 0)
+        self.assertFalse(row["blockers"])
+        self.assertTrue(any("team review" in risk for risk in row["risks"]))
 
 
 class DataSafetyTests(unittest.TestCase):
@@ -182,6 +223,47 @@ class DataSafetyTests(unittest.TestCase):
             self.assertNotIn("<img src=x", markup)
             self.assertIn("&lt;img", markup)
             self.assertIn("SYNTHETIC DATA", markup)
+
+
+class InclusiveReportTests(unittest.TestCase):
+    def row(self, **changes):
+        row = s.score(notice(**changes), s.DEFAULTS, NOW)
+        row["change"] = "NEW"
+        return row
+
+    def test_low_score_is_not_a_minimum_score_filter(self):
+        row = self.row(responseDeadLine="", description_text="")
+        self.assertLess(row["score"], 55)
+        chosen = s.choose([row], {**s.DEFAULTS, "minimum_report_score": 999})
+        self.assertEqual([x["id"] for x in chosen], [row["id"]])
+
+    def test_unhighlighted_candidates_still_appear_in_email_index(self):
+        first = self.row()
+        additional = self.row(noticeId="additional", title="Unranked specialty review", naicsCode="541513", responseDeadLine="")
+        cfg = {**s.DEFAULTS, "max_highlights": 1}
+        chosen = s.choose([first, additional], cfg)
+        self.assertEqual(len(chosen), 1)
+        with tempfile.TemporaryDirectory() as d:
+            paths = s.write_report([first, additional], chosen, cfg, NOW, Path(d), True)
+            for path in paths[:2]:
+                text = path.read_text()
+                self.assertIn("Unranked specialty review", text)
+                self.assertIn("not excluded", text.lower())
+
+    def test_additional_index_escapes_content(self):
+        row = self.row()
+        row["title"] = "<script>unsafe</script>"
+        row["risks"] = ["<img src=x onerror=bad>"]
+        with tempfile.TemporaryDirectory() as d:
+            paths = s.write_report([row], [], s.DEFAULTS, NOW, Path(d), True)
+            text = paths[1].read_text()
+            self.assertNotIn("<script>unsafe", text)
+            self.assertNotIn("<img src=x", text)
+            self.assertIn("&lt;script&gt;unsafe", text)
+
+    def test_actual_notice_and_certification_filters_remain(self):
+        rows = [self.row(typeOfSetAside="8A"), self.row(active="No"), self.row(responseDeadLine="2020-01-01T00:00:00Z")]
+        self.assertEqual(s.choose(rows, s.DEFAULTS), [])
 
 
 class SamApiTests(unittest.TestCase):
