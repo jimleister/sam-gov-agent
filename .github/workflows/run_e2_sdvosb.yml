@@ -63,7 +63,18 @@ jobs:
           SEND_EMAIL: '0'
         run: python script_e2_sdvosb.py --demo --output e2_sdvosb_demo_output
       - name: Package implementation
-        run: python -m zipfile -c e2_sdvosb_package.zip script_e2_sdvosb.py e2_sdvosb_config.json test_e2_sdvosb.py examples/e2_sdvosb_demo.json E2_SDVOSB_README.md .github/workflows/run_e2_sdvosb.yml
+        run: |
+          python - <<'PY'
+          from zipfile import ZipFile, ZIP_DEFLATED
+          files = ["script_e2_sdvosb.py", "e2_sdvosb_config.json", "test_e2_sdvosb.py",
+                   "requirements.txt", "examples/e2_sdvosb_demo.json", "E2_SDVOSB_README.md",
+                   ".github/workflows/run_e2_sdvosb.yml"]
+          with ZipFile("e2_sdvosb_package.zip", "w", ZIP_DEFLATED) as archive:
+              for path in files:
+                  archive.write(path, arcname=path)
+          with ZipFile("e2_sdvosb_package.zip") as archive:
+              assert set(archive.namelist()) == set(files)
+          PY
       - name: Upload validation output
         if: always()
         uses: actions/upload-artifact@v4
