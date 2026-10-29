@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Weston-prime / E2-subcontractor SAM.gov daily capture report. Python 3.10+.
 
-No JV status, HUBZone certification, staff capacity, margins or win probability
-is inferred. Public-notice triage only; attachments and bid eligibility need review.
-Run --demo to validate/report with synthetic notices, without API calls or email.
+Evaluate potential TEAM opportunities, not Weston's standalone delivery capacity.
+Staffing, specialist partners, workshare, size and complexity are review notes,
+never capacity-based exclusions or score penalties. No certifications, resources,
+margins or win probability are inferred. Attachments require human review.
+Run --demo for synthetic examples without API calls, production state or email.
 """
 from __future__ import annotations
 
@@ -63,31 +65,31 @@ ADJACENT = {
     "237110": "Water and Sewer Line and Related Structures Construction (expansion)",
     "237120": "Oil and Gas Pipeline and Related Structures Construction (expansion)",
 }
-# family: (terms, Weston execution-readiness proxy out of 20, suggested work split)
+# family: (scope terms, possible team roles). No standalone-capacity scores.
 FAMILIES = {
     "inspection / construction oversight": (
         ["construction inspection", "construction management", "welding inspection",
          "quality assurance", "quality control", "coating inspection", "project controls",
-         "commissioning", "building inspection", "non-destructive testing"], 17,
-        "Weston: accountable PM and substantive inspection/field delivery. E2: defined technical specialists, QA support and surge capacity."),
+         "commissioning", "building inspection", "non-destructive testing"],
+        "Possible team: Weston prime management and inspection delivery; E2 technical specialists, QA and surge support. Final staffing and work allocation to be developed."),
     "environmental / safety": (
         ["environmental consulting", "environmental compliance", "environmental assessment",
          "remediation", "industrial hygiene", "asbestos", "lead-based paint", "hazardous waste",
-         "stormwater", "safety and health"], 12,
-        "Weston: PM, qualified field staff and documented field deliverables. E2: scoped engineering/scientific and technical-review support."),
+         "stormwater", "safety and health"],
+        "Possible team: Weston prime management and field delivery; E2 environmental/scientific expertise and technical review; additional qualified partners as needed."),
     "facilities / utilities": (
         ["facilities support", "facility maintenance", "facilities maintenance", "base operations",
          "boiler", "chiller", "hvac", "utility systems", "water treatment", "wastewater",
-         "electrical maintenance", "preventive maintenance", "building maintenance"], 10,
-        "Weston: operating management and substantive onsite delivery team. E2: scoped specialty maintenance, engineering and technical support."),
+         "electrical maintenance", "preventive maintenance", "building maintenance"],
+        "Possible team: Weston prime operating management; E2 facilities, utility and technical support. Build the staffing and compliant workshare plan rather than assuming existing capacity."),
     "professional staffing / management": (
         ["staff augmentation", "technical staffing", "project management", "program management",
-         "administrative support", "work planning", "records management"], 14,
-        "Weston: employ and supervise the proposed core team and own deliverables. E2: clearly bounded specialist and proposal support."),
+         "administrative support", "work planning", "records management"],
+        "Possible team: Weston prime management and recruited delivery team; E2 specialist staff and proposal support. Employment, subcontracting and work allocation remain planning decisions."),
     "site / logistics support": (
         ["warehousing", "warehouse", "fleet management", "grounds maintenance", "landscaping",
-         "solid waste", "logistics support", "expeditionary", "life support", "transportation"], 12,
-        "Weston: PM and substantive logistics/site execution. E2: defined facilities, environmental, utility or technical work packages."),
+         "solid waste", "logistics support", "expeditionary", "life support", "transportation"],
+        "Possible team: Weston logistics/prime management; E2 facilities, environmental, utility and technical work packages; additional delivery partners as appropriate."),
 }
 CODE_FAMILY = {
     "541350": "inspection / construction oversight", "541380": "inspection / construction oversight",
@@ -102,15 +104,15 @@ CODE_FAMILY = {
     "562111": "site / logistics support",
 }
 RISK_TERMS = {
-    "Costed staffing/mobilization plan required for continuous or multi-site coverage":
+    "Develop staffing/mobilization plan for continuous or multi-site coverage":
         ["24/7", "24 hour", "24-hour", "nationwide", "multi-site", "multiple sites"],
-    "Professional licensing / SF330 / prime A-E qualifications must be checked":
+    "Professional licensing / SF330 / prime A-E qualifications require review":
         ["sf330", "sf 330", "architect-engineer", "architect engineer", "professional engineer"],
     "Clearance / cybersecurity requirement requires documentary confirmation":
         ["facility clearance", "top secret", "secret clearance", "cmmc level 2", "cmmc level 3"],
-    "Bonding and working-capital capacity must be checked":
+    "Develop bonding and working-capital arrangements as needed":
         ["performance bond", "payment bond", "bid bond", "bonding capacity"],
-    "Healthcare-site controls and specialist qualifications require review":
+    "Healthcare-site controls and specialist qualifications require team planning":
         ["infection control", "icra", "asbestos", "radiological", "nuclear facility"],
     "Existing vehicle/holder access must be verified; E2 access does not transfer to Weston":
         ["gsa schedule", "oasis+", "oasis plus", "seaport", "contract holders only",
@@ -123,7 +125,7 @@ DEFAULTS = {
     "hubzone_certified": False, "include_adjacent_naics": True,
     "discovery_days": 7, "initial_days": 90, "max_api_calls": 220,
     "max_pages_per_query": 40, "description_limit": 45,
-    "top_per_lane": 5, "max_highlights": 10, "minimum_report_score": 55,
+    "top_per_lane": 5, "max_highlights": 10,
     "preferred_states": ["NC", "SC", "VA", "CO", "PA"],
     "email_to": "jleister@westontrolley.com",
 }
@@ -146,7 +148,6 @@ def url_ok(value: Any, sam_only: bool = False) -> str:
         return ""
     if sam_only and p.hostname not in {"sam.gov", "www.sam.gov"}:
         return ""
-    # Never propagate API credentials into reports/state.
     return urlunsplit((p.scheme, p.netloc, p.path,
                       urlencode([(k, v) for k, v in parse_qsl(p.query)
                                  if k.lower() not in {"api_key", "apikey"}]), p.fragment))
@@ -220,7 +221,6 @@ def setaside(o: dict) -> str:
         return known[c]
     if c and c not in {"NONE", "N/A", "NULL"}:
         return "Unknown designation: " + c
-    # Only the structured set-aside description, NEVER generic notice prose.
     t = o["setaside_text"].lower()
     for terms, label in [(["hubzone"], "HUBZone"), (["8(a)"], "8(a)"),
                          (["economically disadvantaged women", "edwosb"], "EDWOSB"),
@@ -234,12 +234,12 @@ def setaside(o: dict) -> str:
 
 def workshare(code: str) -> str:
     if code.startswith(("236", "237")):
-        return "General construction: normally <=85% to non-similarly-situated subs, excluding materials. Cost and validate the actual contract workshare."
+        return "General construction: normally <=85% to non-similarly-situated subs, excluding materials. Develop and validate the actual contract workshare."
     if code.startswith("238"):
-        return "Specialty-trade construction: normally <=75% to non-similarly-situated subs, excluding materials. Cost and validate the actual contract workshare."
+        return "Specialty-trade construction: normally <=75% to non-similarly-situated subs, excluding materials. Develop and validate the actual contract workshare."
     if code.startswith(("31", "32", "33")):
         return "Supply/manufacturing: verify nonmanufacturer rule/waiver and applicable 50% subcontract limitation; do not apply a services shortcut."
-    return "Services: normally <=50% of government payments to non-similarly-situated subs. Count E2 in that pool unless independently established otherwise."
+    return "Services: normally <=50% of government payments to non-similarly-situated subs. Evaluate hiring, similarly situated partners and other compliant structures; not a reason to exclude the opportunity."
 
 
 def score(o: dict, cfg: dict, now: datetime) -> dict:
@@ -254,19 +254,18 @@ def score(o: dict, cfg: dict, now: datetime) -> dict:
     fam = max(matches, key=lambda k: len(matches[k])) if matches else CODE_FAMILY.get(code, "unverified specialty")
     reasons, risks, blocked = [], [], []
     if code in REGISTERED:
-        fit = 22
+        fit = 35
         reasons.append("E2 Federal SAM-derived NAICS match: " + code)
     elif cfg["include_adjacent_naics"] and code in ADJACENT:
-        fit = 18
+        fit = 30
         reasons.append("Strategic adjacent NAICS (not verified E2 Federal registration): " + code)
     else:
         fit = 8 if matches else 0
-    fit = min(30, fit + (8 if matches else 0))
+    fit = min(50, fit + (15 if matches else 0))
     if matches:
         reasons.append("Scope signals: " + ", ".join(t for ts in matches.values() for t in ts)[:240])
     if sa.startswith("SDVOSB"):
-        route = 20
-        lane = "SDVOSB prime candidates"
+        route, lane = 20, "SDVOSB prime candidates"
     elif early and va:
         route, lane = 14, "Early-stage / market shaping"
     elif sa.startswith("VOSB") or sa in {"Small business", "Partial small business"}:
@@ -302,36 +301,30 @@ def score(o: dict, cfg: dict, now: datetime) -> dict:
     if date_note:
         risks.append(date_note)
     timing = 15 if days is not None and days >= 21 else 12 if days is not None and days >= 10 else 7 if days is not None and days >= 4 else 2
-    execution = FAMILIES.get(fam, ([], 5, "Define substantive Weston work before qualifying this scope."))[1]
+    # A team can add staff, partners and resources. No prime-only capacity proxy.
     for risk, terms in RISK_TERMS.items():
         if any(has(text, t) for t in terms):
             risks.append(risk)
-            execution -= 3
     if code.startswith(("236", "237", "238")):
-        risks.append("Construction: confirm prime licensing, bonding, safety program and actual self-performance")
-        execution -= 2
+        risks.append("Construction: develop prime licensing, bonding, safety and workshare arrangements")
     if code == "541330":
-        risks.append("Confirm whether this is qualifications-based A-E procurement and whether Weston satisfies prime licensing/experience requirements")
-        execution -= 3
+        risks.append("Confirm whether this is qualifications-based A-E procurement and address prime licensing/experience requirements in the team structure")
     if any(has(text, t) for t in ["clinical staffing", "nursing services", "physician services", "medical residency", "registered nurse", "anesthesiology"]):
-        blocked.append("Clinical delivery is outside the configured E2/Weston capability focus")
+        risks.append("Clinical/specialist delivery needs a qualified team; capability is not established by this scan. Retained for review, not excluded.")
     agency = 10 if va else 7 if any(k in o["agency"].upper() for k in ["ENERGY", "NAVY", "CORPS OF ENGINEERS", "ENVIRONMENTAL PROTECTION"]) else 3
     geo = 5 if set(o["states"]) & set(cfg["preferred_states"]) else 3 if o["states"] else 1
-    parts = {"scope_fit_30": fit, "contracting_route_20": route, "execution_proxy_20": max(0, execution),
+    parts = {"team_scope_fit_50": fit, "contracting_route_20": route,
              "response_time_15": timing, "agency_fit_10": agency, "location_5": geo}
     total = sum(parts.values())
     if fam == "unverified specialty" and not wex:
-        risks.append("No specific supported delivery discipline established by notice text")
-        total = min(total, 54)
+        risks.append("Specialty team structure requires review; lack of a configured discipline does not exclude this opportunity")
     if not o["description"] or o["description_status"].startswith("cached"):
         risks.append("Description unavailable/not fetched: title-only assessment; attachments not reviewed")
         total = min(total, 64)
     if not due or o["active"] not in {"yes", "true", "1"} or o["refresh"] == "unavailable":
         total = min(total, 49)
-    if any("Existing vehicle/holder" in r or "Clearance /" in r for r in risks):
-        total = min(total, 59)
     if code not in REGISTERED and code not in ADJACENT and not matches and not wex:
-        blocked.append("No relevant capability signal")
+        risks.append("Scope alignment not established by current metadata; retained for team review")
     if o["type"].lower() not in {"sources sought", "presolicitation", "pre-solicitation", "solicitation", "combined synopsis/solicitation"}:
         if not wex:
             blocked.append("Not an actionable solicitation / market-research notice")
@@ -344,12 +337,12 @@ def score(o: dict, cfg: dict, now: datetime) -> dict:
         rating = "Shape requirement - not a bid"
     if blocked:
         rating = "Do not pursue as currently classified"
-    risks.append("Cost and approve Weston's substantive workshare, staffing and independent prime control; no pass-through model")
+    risks.append("Define staffing, specialist partners, workshare and prime control with Weston/E2; these are planning items, not capacity-based rejection reasons. Check requirements at the applicable proposal, award and performance stages.")
     risks.append("Confirm solicitation permits proposed subcontractor experience; E2/JV past performance is not automatically Weston's")
     o.update(score=total, rating=rating, lane=lane, family=fam, setaside=sa,
              components=parts, why=reasons, risks=risks, blockers=blocked,
-             workshare=workshare(code), roles=FAMILIES.get(fam, ([], 0, "Define a credible prime/sub work split."))[2],
-             next_step="Review solicitation/attachments and certification/size; request E2's technical scope, named staff, pricing and references; build a costed prime/sub workshare and bid/no-bid decision.")
+             workshare=workshare(code), roles=FAMILIES.get(fam, ([], "Weston/E2: identify the necessary personnel, specialist partners and compliant prime/sub work split."))[1],
+             next_step="Review solicitation/attachments and eligibility; assess the combined team and additional partners, obtain E2 scope/pricing, and develop the delivery and workshare structure. Do not require Weston to perform the whole scope alone.")
     return o
 
 
@@ -398,7 +391,6 @@ class SamClient:
                 return data
             if r.status_code == 404 and description:
                 return ""
-            # Only an explicit documented no-data message is accepted for search 404s.
             if r.status_code == 404 and "no data found" in r.text.lower():
                 return {"totalRecords": 0, "opportunitiesData": []}
             if r.status_code == 429:
@@ -454,7 +446,6 @@ def discover(client: SamClient, cfg: dict, now: datetime, previous: dict) -> dic
     seen = {}
     first = not previous.get("last_success")
     for i, code in enumerate(codes):
-        # Rotating yearly backfill catches older still-open postings within a week.
         days = 364 if i % 7 == today.weekday() else int(cfg["initial_days"] if first else cfg["discovery_days"])
         for raw in client.search({**bounds(today - timedelta(days=days), today), "ncode": code}):
             o = normalize(raw)
@@ -487,8 +478,6 @@ def refresh_saved(client: SamClient, previous: dict, seen: dict, now: datetime) 
             found["prior_ids"] = old.get("prior_ids", [])
             seen[nid] = found
         else:
-            # Reconnect only with an unambiguous same solicitation AND office,
-            # not by title. This makes replacement-ID amendments discoverable.
             candidates = [x for x in seen.values() if old.get("solicitation") and old.get("office_code")
                           and x["solicitation"] == old["solicitation"] and x["office_code"] == old["office_code"]
                           and x["posted"] > old.get("posted", "") and x["type"] == old.get("type")]
@@ -521,8 +510,9 @@ def choose(rows: list[dict], cfg: dict) -> list[dict]:
         lane = o["lane"]
         if lane == "Excluded / blocked":
             continue
-        threshold = 35 if lane in {"Unverified saved notices", "WEXMAC public-notice watch", "Market intelligence / sole-source watch"} else int(cfg["minimum_report_score"])
-        if o["score"] < threshold or counts.get(lane, 0) >= int(cfg["top_per_lane"]):
+        # Headline limits control email length, not opportunity retention.
+        # No minimum score: remaining candidates appear in the full email index.
+        if counts.get(lane, 0) >= int(cfg["top_per_lane"]):
             continue
         chosen.append(o)
         counts[lane] = counts.get(lane, 0) + 1
@@ -540,12 +530,16 @@ def write_report(rows: list[dict], selected: list[dict], cfg: dict, now: datetim
     out.mkdir(parents=True, exist_ok=True)
     tag = "DEMO - SYNTHETIC DATA - " if demo else ""
     headline = tag + "Weston prime + E2 technical partner | Daily capture report"
-    intro = ("Feasibility scores are explainable screening heuristics, NOT win probabilities or bid approvals. "
+    intro = ("Scores rank potential TEAM opportunity fit, NOT Weston's standalone capacity, win probability or bid approval. "
+             "No capacity, staffing, workshare, contract-size, complexity, licensing, bonding or clearance assumption causes exclusion or a score penalty. "
+             "These are review notes; the team and delivery structure are to be developed. "
              "Weston is the proposed SDVOSB prime; E2 is a non-similarly-situated technical subcontractor unless established otherwise. "
              "No JV, HUBZone approval, bonding, clearance or transferable past performance is assumed. "
              "Contract value, profit and incumbent are unknown unless separately verified. Attachments are linked, not parsed. "
              "Saved notices are refreshed before old deadlines are applied. Public SAM does not expose all WEXMAC holder-only task orders.")
     coverage = (f"Generated {now.astimezone(EASTERN).isoformat()}. {len(rows)} records evaluated; {len(selected)} highlighted. "
+                "Every non-blocked record is shown below or in the additional ranked index, with all records in the CSV/JSON archive. "
+                "Only detailed highlights and previously tracked records enter the persistent watchlist. "
                 f"Discovery: {cfg['discovery_days']}-day rolling window; {cfg['initial_days']}-day initial window; "
                 "one-year backfill rotates across codes weekly. This is a bounded search, not an exhaustive universe of all procurement notices. "
                 "E2 Federal: RRM2YJMNTPX1 / 14TE2; 17 corroborated SAM-derived codes, direct entity export pending.")
@@ -568,24 +562,52 @@ def write_report(rows: list[dict], selected: list[dict], cfg: dict, now: datetim
                     "Why: " + "; ".join(o["why"]),
                     "Score breakdown: " + json.dumps(o["components"]),
                     "Notice excerpt (" + o["description_status"] + "): " + (o["description"][:550] or "Description unavailable - verify source"),
-                    "Proposed roles: " + o["roles"], "Workshare: " + o["workshare"],
-                    "Risks / checks: " + "; ".join(o["risks"]), "Next action: " + o["next_step"],
+                    "Possible roles: " + o["roles"], "Workshare review: " + o["workshare"],
+                    "Review / structuring notes: " + "; ".join(o["risks"]), "Next action: " + o["next_step"],
                     "Source: " + o["url"]]
             lines += [title, *body, ""]
             panels.append('<article><h3>' + html.escape(title) + '</h3>' +
                           ''.join('<p>' + html.escape(x) + '</p>' for x in body[:-1]) +
                           (f'<p><a href="{html.escape(o["url"], quote=True)}">Open SAM.gov notice</a></p>' if o["url"] else '') + '</article>')
     if not selected:
-        msg = "No notices cleared the configured reporting thresholds in this successful scan. No filler recommendations were created."
+        msg = "No current candidate notices were available for highlights in this successful scan. No filler recommendations were created."
         lines.append(msg)
         panels.append("<p>" + msg + "</p>")
+    selected_ids = {o["id"] for o in selected}
+    additional = sorted((o for o in rows if o["id"] not in selected_ids and o["lane"] != "Excluded / blocked"),
+                        key=lambda x: (-x["score"], x["deadline"] or "9999"))
+    if additional:
+        lines += ["", "ADDITIONAL RANKED OPPORTUNITIES - NOT EXCLUDED",
+                  "These remain in the candidate pool. Headline space is limited; a low score is not a no-bid decision."]
+        panels.append("<h2>Additional ranked opportunities - not excluded</h2><p>All other candidates, including lower-scoring and verification-needed records. Headline space is limited; a low score is not a no-bid decision.</p>")
+        panels.append("<table style='width:100%;border-collapse:collapse'><thead><tr><th>Score</th><th>Opportunity</th><th>Deadline / review notes</th></tr></thead><tbody>")
+        for o in additional:
+            review = "; ".join(o["risks"])
+            lines += [f"{o['score']}/100 | {o['lane']} | {o['title']}",
+                      f"{o['agency']} | NAICS {o['naics']} | {o['setaside']} | Deadline: {o['deadline'] or 'not supplied'}",
+                      "Review: " + review, "Source: " + o["url"], ""]
+            label = html.escape(o["title"])
+            if o["url"]:
+                label = f'<a href="{html.escape(o["url"], quote=True)}">{label}</a>'
+            panels.append("<tr><td style='vertical-align:top;padding:8px'>" + str(o["score"]) +
+                          "</td><td style='vertical-align:top;padding:8px'>" + label + "<br>" +
+                          html.escape(o["lane"] + " | " + o["agency"] + " | " + o["setaside"]) +
+                          "</td><td style='vertical-align:top;padding:8px'>" +
+                          html.escape(o["deadline"] or "Deadline not supplied") + "<br>" + html.escape(review) + "</td></tr>")
+        panels.append("</tbody></table>")
+    blocked_count = sum(o["lane"] == "Excluded / blocked" for o in rows)
+    if blocked_count:
+        note = (f"{blocked_count} records are separated from the candidate list because of notice status/type "
+                "or an unestablished set-aside certification, not assumed delivery capacity. Their exact reasons remain in the full CSV/JSON archive.")
+        lines.append(note)
+        panels.append("<p>" + html.escape(note) + "</p>")
     tracked_missing = [o for o in rows if o["refresh"] == "unavailable"]
     if tracked_missing:
         warning = "UNVERIFIED SAVED NOTICES: " + "; ".join(o["id"] + " " + o["title"] for o in tracked_missing)
         lines += [warning]
         panels.append("<p><strong>" + html.escape(warning) + "</strong></p>")
-    footer = ("Before bid/no-bid: validate SBA certification, size under assigned NAICS, prime licensing, staffing, "
-              "cash/bonding, solicitation experience rules, costed workshare and independent control. "
+    footer = ("Opportunity discovery does not decide the final team or work allocation. Staffing, partners and workshare are review items, not automatic no-bid decisions. "
+              "Check SBA certification, size, licensing, bonding, experience and control requirements at the applicable proposal, award and performance stages. "
               "Resolve owner employment/conflict-of-interest issues with counsel. No proposals or outreach are sent by this scanner.")
     sources = ["https://www.acquisition.gov/far/52.219-14",
                "https://www.ecfr.gov/current/title-13/chapter-I/part-121/section-121.103",
@@ -610,7 +632,7 @@ def email_report(paths: list[Path], cfg: dict, now: datetime, send: bool, demo: 
     if not recipients or any("@" not in a or "\n" in a or "\r" in a for a in recipients):
         raise RuntimeError("Invalid report recipient")
     msg = EmailMessage()
-    msg["Subject"] = ("DEMO - " if demo else "") + "Weston + E2 | SDVOSB opportunity feasibility | " + now.astimezone(EASTERN).strftime("%Y-%m-%d")
+    msg["Subject"] = ("DEMO - " if demo else "") + "Weston + E2 | SDVOSB team opportunity fit | " + now.astimezone(EASTERN).strftime("%Y-%m-%d")
     sender = os.getenv("FROM_EMAIL") or os.getenv("SMTP_USER") or cfg["email_to"]
     msg["From"], msg["To"] = sender, ", ".join(recipients)
     msg.set_content(paths[0].read_text(encoding="utf-8"))
@@ -660,7 +682,6 @@ def main(argv: list[str] | None = None) -> int:
                 raise RuntimeError("Unsupported state file; refusing to reset the watchlist")
         if args.demo:
             raw = json.loads((ROOT / "examples/e2_sdvosb_demo.json").read_text())
-            # Move synthetic dates relative to this run so demo remains useful.
             for i, item in enumerate(raw):
                 item["postedDate"] = (now - timedelta(days=2)).isoformat()
                 item["responseDeadLine"] = (now + timedelta(days=25 - i)).isoformat()
@@ -669,7 +690,7 @@ def main(argv: list[str] | None = None) -> int:
             client = SamClient(os.getenv("SAM_API_KEY", ""), cfg)
             seen = refresh_saved(client, previous, discover(client, cfg, now, previous), now)
             preliminary = sorted([score(o, cfg, now) for o in seen.values()], key=lambda o: -o["score"])
-            eligible = [o for o in preliminary if o["score"] > 0 and o["refresh"] == "current"]
+            eligible = [o for o in preliminary if not o["blockers"] and o["refresh"] == "current"]
             eligible.sort(key=lambda o: (o["id"] not in previous.get("notices", {}), -o["score"]))
             for o in eligible[:int(cfg["description_limit"])]:
                 target = seen[o["id"]]
@@ -693,7 +714,6 @@ def main(argv: list[str] | None = None) -> int:
         if not args.demo:
             tracked = set(previous["notices"]) | {o["id"] for o in selected}
             retained = {o["id"]: o for o in rows if o["id"] in tracked or any(i in tracked for i in o.get("prior_ids", []))}
-            # Drop only affirmatively closed/expired notices, not low-scoring still-open records.
             retained = {nid: o for nid, o in retained.items() if o["refresh"] == "unavailable" or not any(
                 b in {"Notice inactive, archived or cancelled", "Response deadline passed on refreshed notice"} for b in o["blockers"])}
             state = {"version": STATE_VERSION, "last_success": now.isoformat(), "notices": retained}
@@ -705,7 +725,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"E2 SDVOSB report complete: {len(rows)} evaluated, {len(selected)} highlighted; email={'sent' if os.getenv('SEND_EMAIL') == '1' and not args.demo else 'draft only'}")
         return 0
     except Exception as exc:
-        # Exception chains / response URLs can contain API credentials. Do not log them.
         message = str(exc).replace(os.getenv("SAM_API_KEY") or "__NO_KEY__", "[REDACTED]")
         (args.output / "scan_failure.txt").write_text("SCAN FAILED - NOT A ZERO-OPPORTUNITY RESULT\n" + message + "\nPrior state retained.\n", encoding="utf-8")
         print("E2 scan failed: " + message, file=sys.stderr)
