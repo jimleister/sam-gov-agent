@@ -109,10 +109,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          artifact_id=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=e2-sdvosb-opportunity-state&per_page=100" --jq '[.[].artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")] | sort_by(.created_at) | reverse | .[0].id // empty')
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/artifacts?name=e2-sdvosb-opportunity-state&per_page=100" > "$RUNNER_TEMP/e2-artifact-pages.json"
+          artifact_id=$(jq -r '[.[].artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")] | sort_by(.created_at) | reverse | .[0].id // empty' "$RUNNER_TEMP/e2-artifact-pages.json")
           if [ -n "$artifact_id" ]; then
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/e2-state.zip"
             unzip -p "$RUNNER_TEMP/e2-state.zip" e2_sdvosb_state.json > e2_sdvosb_state.json
+          else
+            echo "No previous E2 watchlist artifact; starting first live scan."
           fi
       - name: Draft and optionally send report
         env:
