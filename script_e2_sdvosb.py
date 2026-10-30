@@ -59,12 +59,15 @@ REGISTERED = {
 }
 # Strategic scope expansions, NOT asserted to be E2 Federal's registrations.
 ADJACENT = {
+    "562112": "Hazardous Waste Collection (strategic expansion)",
     "541330": "Engineering Services (parent profile; verify delivering entity)",
     "541350": "Building Inspection Services (strategic expansion)",
     "541380": "Testing Laboratories and Services (strategic expansion)",
     "237110": "Water and Sewer Line and Related Structures Construction (expansion)",
     "237120": "Oil and Gas Pipeline and Related Structures Construction (expansion)",
 }
+# One-time historical discovery for newly added scope, even on an established watchlist.
+DISCOVERY_BACKFILLS = {"562112": 90}
 # family: (scope terms, possible team roles). No standalone-capacity scores.
 FAMILIES = {
     "inspection / construction oversight": (
@@ -95,6 +98,7 @@ CODE_FAMILY = {
     "541350": "inspection / construction oversight", "541380": "inspection / construction oversight",
     "541330": "inspection / construction oversight", "541370": "inspection / construction oversight",
     "541620": "environmental / safety", "562910": "environmental / safety",
+    "562112": "environmental / safety",
     "541690": "environmental / safety", "561210": "facilities / utilities",
     "238220": "facilities / utilities", "236220": "facilities / utilities",
     "237110": "facilities / utilities", "237120": "facilities / utilities",
@@ -447,6 +451,8 @@ def discover(client: SamClient, cfg: dict, now: datetime, previous: dict) -> dic
     first = not previous.get("last_success")
     for i, code in enumerate(codes):
         days = 364 if i % 7 == today.weekday() else int(cfg["initial_days"] if first else cfg["discovery_days"])
+        if code not in previous.get("completed_backfills", []):
+            days = max(days, DISCOVERY_BACKFILLS.get(code, 0))
         for raw in client.search({**bounds(today - timedelta(days=days), today), "ncode": code}):
             o = normalize(raw)
             seen[o["id"]] = o
@@ -716,7 +722,10 @@ def main(argv: list[str] | None = None) -> int:
             retained = {o["id"]: o for o in rows if o["id"] in tracked or any(i in tracked for i in o.get("prior_ids", []))}
             retained = {nid: o for nid, o in retained.items() if o["refresh"] == "unavailable" or not any(
                 b in {"Notice inactive, archived or cancelled", "Response deadline passed on refreshed notice"} for b in o["blockers"])}
-            state = {"version": STATE_VERSION, "last_success": now.isoformat(), "notices": retained}
+            state = {"version": STATE_VERSION, "last_success": now.isoformat(), "notices": retained,
+                     "completed_backfills": sorted(set(previous.get("completed_backfills", [])) |
+                         {code for code in DISCOVERY_BACKFILLS if code in REGISTERED or
+                          (cfg["include_adjacent_naics"] and code in ADJACENT)})}
             args.state.parent.mkdir(parents=True, exist_ok=True)
             tmp = args.state.with_suffix(".tmp")
             tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
