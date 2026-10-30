@@ -387,3 +387,25 @@ class TransactionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HazardousWasteDiscoveryTests(unittest.TestCase):
+    def test_new_hazardous_code_backfills_established_watchlist(self):
+        client = Mock()
+        client.search.return_value = []
+        now = datetime(2026, 10, 30, tzinfo=timezone.utc)
+        s.discover(client, s.DEFAULTS, now, {"last_success": "2026-10-29", "notices": {}})
+        params = [c.args[0] for c in client.search.call_args_list if c.args[0].get("ncode") == "562112"]
+        self.assertEqual(len(params), 1)
+        self.assertEqual(params[0]["postedFrom"], "08/01/2026")
+        self.assertEqual(params[0]["postedTo"], "10/30/2026")
+        self.assertEqual(s.CODE_FAMILY["562112"], "environmental / safety")
+        self.assertNotIn("562112", s.REGISTERED)
+
+    def test_completed_hazardous_backfill_returns_to_rolling_window(self):
+        client = Mock()
+        client.search.return_value = []
+        s.discover(client, s.DEFAULTS, datetime(2026, 10, 30, tzinfo=timezone.utc),
+                   {"last_success": "2026-10-29", "completed_backfills": ["562112"]})
+        params = [c.args[0] for c in client.search.call_args_list if c.args[0].get("ncode") == "562112"]
+        self.assertEqual(params[0]["postedFrom"], "10/23/2026")
