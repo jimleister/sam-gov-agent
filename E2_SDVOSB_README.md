@@ -1,6 +1,8 @@
-# Weston prime + E2 Federal Services: SDVOSB opportunity report
+# WTC + E2 Federal Services: daily SDVOSB team opportunity report
 
-This is a sixth independent scanner. It does not replace or modify the existing five scanners. The commercial model is **Weston as the eligible SDVOSB prime, with E2 as a scoped technical subcontractor/teaming partner**. An SBA mentor-protege agreement or JV is not assumed.
+A sixth independent scanner; the other five are unchanged. It pulls **only notices with a structured SDVOSB set-aside** (SAM codes `SDVOSBC` and `SDVOSBS`) and ranks them for the WTC / E2 Federal Services team.
+
+The report is pathway-neutral. **Current state:** WTC (SDVOSB) primes with E2 Federal Services as subcontractor under a teaming agreement. **Future state:** an SBA-approved WTC/E2 Federal mentor-protege joint venture with WTC as managing venturer. Team roles, workshare notes and past-performance notes cover both.
 
 ## Entity research - checked October 29, 2026
 
@@ -38,14 +40,12 @@ Sources:
 
 ## What the daily report does
 
-- Searches the 17 reported E2 Federal NAICS codes, plus five explicitly labeled adjacent industries when enabled.
-- Prioritizes SDVOSB prime opportunities and VA buyers. Other agencies and locations remain eligible; there is no geographic hard exclusion.
-- Evaluates the potential Weston/E2 team and additional delivery partners, not whether Weston could perform the entire scope alone.
-- Separates competitive SDVOSB prospects, early-stage sources sought/presolicitations, secondary opportunities, WEXMAC public notices, sole-source intelligence, and unavailable saved notices.
-- Drafts TXT, HTML and EML reports; sends the HTML/text email with a CSV attachment when enabled. Also saves a complete JSON archive and runtime metrics.
-- Uses the existing `SAM_API_KEY`, `SMTP_USER`, `SMTP_PASS`, `FROM_EMAIL`, and `EMAIL_TO` repository secrets. Optional `SMTP_HOST`, `SMTP_PORT`, and `REPORT_TO` environment variables override defaults. No secrets belong in source files or the config.
-- Default recipient is `jleister@westontrolley.com` only when `REPORT_TO` and `EMAIL_TO` are unset. No E2 personnel or contracting officers are emailed automatically.
-- Default schedule is daily at **8:17 a.m. America/New_York**, subject to GitHub scheduling delays. Scheduled workflows must be on the default branch. Manual runs are supported.
+- Queries SAM.gov by set-aside (`typeOfSetAside=SDVOSBC` and `SDVOSBS`) for solicitations, combined synopses, presolicitations and sources sought. The first run after this change backfills 90 days; later runs use a 7-day rolling window.
+- Scores team fit locally against the 17 reported E2 Federal NAICS codes, the labeled adjacent codes, and scope keywords. SDVOSB notices outside that scope go to the attachment only.
+- Lanes: competitive SDVOSB set-asides, early-stage SDVOSB (sources sought / presolicitation), and SDVOSB sole source (market intelligence, capped at 54).
+- Email format mirrors the USACE and Inspection reports: summary counts, a High Priority table (top 10), Other Strong Matches (next 15), and full ranked CSV + XLSX attachments. There is no saved-notice banner at the top; unrefreshable saved notices are noted in one line at the bottom and listed in the attachment.
+- Uses the existing `SAM_API_KEY`, `SMTP_USER`, `SMTP_PASS`, `FROM_EMAIL`, and `EMAIL_TO` secrets. `REPORT_TO` overrides recipients.
+- Default schedule is daily at **8:17 a.m. America/New_York**. Manual runs are supported.
 
 ## Inclusive team-based opportunity ranking
 
@@ -68,29 +68,20 @@ Scores rank **potential team opportunity fit**, not Weston's standalone capacity
 
 Missing or stale descriptions still cap the score at 64. Missing/unparseable deadlines, uncertain active status and unavailable saved IDs cap it at 49. These describe data quality, not capacity, and do not remove a candidate from the email index. Sources sought are marked as requirement-shaping, not bids. Closed/expired notices, non-actionable notice types and set-asides requiring an unestablished certification remain separated from the candidate list, with exact reasons retained in the full CSV/JSON. Generic capability concerns are never such reasons.
 
-## Prime/subcontractor structuring notes
+## Team pathway notes
 
-These are considerations for the team, not automated exclusion criteria. The scanner treats E2 as a non-similarly-situated subcontractor unless independently established otherwise. Typical limitations are 50% for services, 85% for general construction and 75% for specialty trades, measured as specified in applicable rules/clauses. Construction limits exclude materials; services should not be simplistically described as a universal 50/50 labor split. Supply/nonmanufacturer requirements need a different review. Validate actual contract clauses and applicable exclusions with procurement counsel.
+These are considerations for the team, not exclusion criteria. **Prime/sub (current):** E2 Federal is treated as a non-similarly-situated subcontractor; typical limitations are 50% for services, 85% for general construction and 75% for specialty trades (excluding materials). Watch the ostensible subcontractor rule on set-asides. **Mentor-protege JV (future):** the JV is the offeror and must meet the limitation as a whole; WTC as protege generally performs at least 40% of the work the JV performs. Agencies must consider each JV member's past performance. The JV pathway requires SBA approval of the mentor-protege agreement first.
 
-Weston/E2 can evaluate hiring, similarly situated subcontractors and other lawful structures rather than expecting Weston to perform all work with today's resources. Staffing, work allocation and operating arrangements will be developed by the team; the discovery script does not decide them.
+The program does not assume HUBZone, 8(a), WOSB or other unestablished eligibility. Structured set-aside fields control classification; a generic mention of SDVOSBs in notice prose does not make a procurement an SDVOSB set-aside. Validate clauses with procurement counsel.
 
-A prime/subcontract arrangement does not automatically gain an approved mentor-protege JV affiliation exception. Weston must maintain independent prime control and address unusual reliance concerns as applicable. A subcontracting percentage alone does not resolve every affiliation/control question. Check obligations at the applicable proposal, award and performance stages rather than assuming all requirements can be deferred until after award. The FAR subcontracting limitation is a performance obligation accepted by offer/contract; actual compliance periods are specified in the clause. Resolve employment/conflict issues and document the agreed structure.
-
-The program does not assume HUBZone, 8(a), WOSB or other unestablished eligibility. Structured set-aside fields control classification; a generic mention of SDVOSBs in notice prose does not make a procurement an SDVOSB set-aside. E2's historical work is not automatically Weston's past performance. SF330/A-E, licensing, bonding, security and vehicle access are review notes, not capability-based rejection criteria.
-
-Authoritative rule references:
 - https://www.acquisition.gov/far/52.219-14
 - https://www.acquisition.gov/far/52.219-27
 - https://www.ecfr.gov/current/title-13/chapter-I/part-121/section-121.103
-- https://www.sba.gov/veterans/
-
-## WEXMAC scope
-
-This is a **public-notice watch**, separate from competitive SDVOSB opportunities. It searches WEXMAC and TITUS terms but does not infer that a Weston award grants access to every region, extension or task order. It does not read holder-only portals, ordering emails, attachments requiring authorization, or other nonpublic notices. The existing logistics/WEXMAC scanner remains unchanged.
+- https://www.sba.gov/federal-contracting/contracting-assistance-programs/sba-mentor-protege-program
 
 ## Discovery, persistence and limits
 
-Discovery uses seven-day posting windows, a 90-day first-run window, and rotating one-year lookbacks across NAICS codes. The initial run is not a complete historical backfill; every code receives its one-year search over a full seven-day cycle. Notices older than one year that were never reported are not guaranteed to be discovered. Public opportunities are not a complete inventory of every agency's available work.
+Discovery uses seven-day posting windows and a one-time 90-day backfill. Notices posted before the backfill window that were never reported are not guaranteed to be discovered. Public opportunities are not a complete inventory of every agency's available work.
 
 Only detailed highlights and previously tracked records are retained for daily refresh. Every saved ID is refreshed **before** its cached deadline is applied, so extensions can be discovered. Confirmed closed/expired notices leave the watchlist. Unavailable IDs remain explicitly unverified for retry, not falsely described as open. An unambiguous newer notice with the same solicitation and office may inherit tracking. New/updated/still-open labels compare saved notice content; this is not an unlimited archive of every notice ever seen.
 

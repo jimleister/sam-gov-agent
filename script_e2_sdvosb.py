@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Weston-prime / E2-subcontractor SAM.gov daily capture report. Python 3.10+.
+"""WTC + E2 Federal Services: daily SDVOSB set-aside team opportunity report. Python 3.10+.
 
-Evaluate potential TEAM opportunities, not Weston's standalone delivery capacity.
-Staffing, specialist partners, workshare, size and complexity are review notes,
-never capacity-based exclusions or score penalties. No certifications, resources,
-margins or win probability are inferred. Attachments require human review.
-Run --demo for synthetic examples without API calls, production state or email.
+Discovery pulls ONLY notices carrying a structured SDVOSB set-aside (SDVOSBC/SDVOSBS).
+Opportunities are ranked for the WTC/E2 team under either delivery pathway:
+  - current state: WTC (SDVOSB) prime with E2 Federal Services as subcontractor
+  - future state: WTC-E2 Federal SBA mentor-protege joint venture, WTC managing venturer
+Staffing, workshare, size and complexity are review notes, never exclusions.
+No certifications, resources, margins or win probability are inferred.
+Attachments require human review. Run --demo for synthetic examples.
 """
 from __future__ import annotations
 
@@ -66,33 +68,31 @@ ADJACENT = {
     "237110": "Water and Sewer Line and Related Structures Construction (expansion)",
     "237120": "Oil and Gas Pipeline and Related Structures Construction (expansion)",
 }
-# One-time historical discovery for newly added scope, even on an established watchlist.
-DISCOVERY_BACKFILLS = {"562112": 90}
 # family: (scope terms, possible team roles). No standalone-capacity scores.
 FAMILIES = {
     "inspection / construction oversight": (
         ["construction inspection", "construction management", "welding inspection",
          "quality assurance", "quality control", "coating inspection", "project controls",
          "commissioning", "building inspection", "non-destructive testing"],
-        "Possible team: Weston prime management and inspection delivery; E2 technical specialists, QA and surge support. Final staffing and work allocation to be developed."),
+        "WTC: SDVOSB lead, program management and field staffing. E2: inspection, QA/QC and technical specialists."),
     "environmental / safety": (
         ["environmental consulting", "environmental compliance", "environmental assessment",
          "remediation", "industrial hygiene", "asbestos", "lead-based paint", "hazardous waste",
          "stormwater", "safety and health"],
-        "Possible team: Weston prime management and field delivery; E2 environmental/scientific expertise and technical review; additional qualified partners as needed."),
+        "WTC: SDVOSB lead, program management and field delivery. E2: environmental and scientific expertise, technical review."),
     "facilities / utilities": (
         ["facilities support", "facility maintenance", "facilities maintenance", "base operations",
          "boiler", "chiller", "hvac", "utility systems", "water treatment", "wastewater",
          "electrical maintenance", "preventive maintenance", "building maintenance"],
-        "Possible team: Weston prime operating management; E2 facilities, utility and technical support. Build the staffing and compliant workshare plan rather than assuming existing capacity."),
+        "WTC: SDVOSB lead and operating management. E2: facilities, utility and technical support."),
     "professional staffing / management": (
         ["staff augmentation", "technical staffing", "project management", "program management",
          "administrative support", "work planning", "records management"],
-        "Possible team: Weston prime management and recruited delivery team; E2 specialist staff and proposal support. Employment, subcontracting and work allocation remain planning decisions."),
+        "WTC: SDVOSB lead, program management and recruiting. E2: specialist staff and proposal support."),
     "site / logistics support": (
         ["warehousing", "warehouse", "fleet management", "grounds maintenance", "landscaping",
          "solid waste", "logistics support", "expeditionary", "life support", "transportation"],
-        "Possible team: Weston logistics/prime management; E2 facilities, environmental, utility and technical work packages; additional delivery partners as appropriate."),
+        "WTC: SDVOSB lead, logistics and program management. E2: facilities, environmental, utility and technical work packages."),
 }
 CODE_FAMILY = {
     "541350": "inspection / construction oversight", "541380": "inspection / construction oversight",
@@ -118,7 +118,7 @@ RISK_TERMS = {
         ["performance bond", "payment bond", "bid bond", "bonding capacity"],
     "Healthcare-site controls and specialist qualifications require team planning":
         ["infection control", "icra", "asbestos", "radiological", "nuclear facility"],
-    "Existing vehicle/holder access must be verified; E2 access does not transfer to Weston":
+    "Contract-vehicle/holder access must be verified for the offering entity":
         ["gsa schedule", "oasis+", "oasis plus", "seaport", "contract holders only",
          "idiq holders", "holders of", "under existing contract"],
 }
@@ -129,10 +129,20 @@ DEFAULTS = {
     "hubzone_certified": False, "include_adjacent_naics": True,
     "discovery_days": 7, "initial_days": 90, "max_api_calls": 220,
     "max_pages_per_query": 40, "description_limit": 45,
-    "top_per_lane": 5, "max_highlights": 10,
+    "top_per_lane": 5, "max_highlights": 10, "shortlist_max": 15,
     "preferred_states": ["NC", "SC", "VA", "CO", "PA"],
     "email_to": "jleister@westontrolley.com",
 }
+SDVOSB_CODES = ["SDVOSBC", "SDVOSBS"]
+NOTICE_TYPES = "o,k,p,r"  # solicitation, combined, presolicitation, sources sought
+SDVOSB_BACKFILL = "sdvosb-only-v2"
+LANE_COMPETITIVE = "Competitive SDVOSB set-asides"
+LANE_EARLY = "Early-stage SDVOSB (sources sought / presolicitation)"
+LANE_SOLE = "SDVOSB sole source (market intelligence)"
+LANE_OUTSIDE = "SDVOSB, outside team NAICS (attachment only)"
+LANE_BLOCKED = "Excluded / blocked"
+PATHWAY = ("Current: WTC prime with E2 Federal Services as subcontractor (teaming agreement). "
+           "Future: WTC-E2 Federal SBA mentor-protege JV with WTC as managing venturer.")
 
 
 def plain(value: Any) -> str:
@@ -237,13 +247,25 @@ def setaside(o: dict) -> str:
 
 
 def workshare(code: str) -> str:
+    jv = (" | Mentor-protege JV: the JV is the offeror and must meet the limitation as a whole; "
+          "WTC as protege generally performs at least 40% of the work the JV performs.")
     if code.startswith(("236", "237")):
-        return "General construction: normally <=85% to non-similarly-situated subs, excluding materials. Develop and validate the actual contract workshare."
-    if code.startswith("238"):
-        return "Specialty-trade construction: normally <=75% to non-similarly-situated subs, excluding materials. Develop and validate the actual contract workshare."
-    if code.startswith(("31", "32", "33")):
-        return "Supply/manufacturing: verify nonmanufacturer rule/waiver and applicable 50% subcontract limitation; do not apply a services shortcut."
-    return "Services: normally <=50% of government payments to non-similarly-situated subs. Evaluate hiring, similarly situated partners and other compliant structures; not a reason to exclude the opportunity."
+        now = "Prime/sub: general construction, normally <=85% to non-similarly-situated subs, excluding materials."
+    elif code.startswith("238"):
+        now = "Prime/sub: specialty trade, normally <=75% to non-similarly-situated subs, excluding materials."
+    elif code.startswith(("31", "32", "33")):
+        now = "Prime/sub: supply/manufacturing, verify nonmanufacturer rule and the 50% limitation."
+    else:
+        now = "Prime/sub: services, normally <=50% of amounts paid to non-similarly-situated subs."
+    return now + jv
+
+
+def in_team_scope(o: dict, cfg: dict) -> bool:
+    code = o["naics"]
+    if code in REGISTERED or (cfg["include_adjacent_naics"] and code in ADJACENT):
+        return True
+    text = (o["title"] + " " + o["description"]).lower()
+    return any(has(text, t) for spec in FAMILIES.values() for t in spec[0])
 
 
 def score(o: dict, cfg: dict, now: datetime) -> dict:
@@ -251,7 +273,6 @@ def score(o: dict, cfg: dict, now: datetime) -> dict:
     text = (o["title"] + " " + o["description"]).lower()
     sa, code = setaside(o), o["naics"]
     early = o["type"].lower() in {"sources sought", "presolicitation", "pre-solicitation"}
-    wex = has(text, "wexmac") or (has(text, "titus") and "NAVY" in o["agency"].upper())
     va = "VETERANS AFFAIRS" in o["agency"].upper()
     matches = {name: [t for t in spec[0] if has(text, t)] for name, spec in FAMILIES.items()}
     matches = {name: terms for name, terms in matches.items() if terms}
@@ -259,37 +280,28 @@ def score(o: dict, cfg: dict, now: datetime) -> dict:
     reasons, risks, blocked = [], [], []
     if code in REGISTERED:
         fit = 35
-        reasons.append("E2 Federal SAM-derived NAICS match: " + code)
+        reasons.append("E2 Federal NAICS " + code)
     elif cfg["include_adjacent_naics"] and code in ADJACENT:
         fit = 30
-        reasons.append("Strategic adjacent NAICS (not verified E2 Federal registration): " + code)
+        reasons.append("Adjacent team NAICS " + code)
     else:
         fit = 8 if matches else 0
     fit = min(50, fit + (15 if matches else 0))
     if matches:
-        reasons.append("Scope signals: " + ", ".join(t for ts in matches.values() for t in ts)[:240])
-    if sa.startswith("SDVOSB"):
-        route, lane = 20, "SDVOSB prime candidates"
-    elif early and va:
-        route, lane = 14, "Early-stage / market shaping"
-    elif sa.startswith("VOSB") or sa in {"Small business", "Partial small business"}:
-        route, lane = 12, "Secondary teaming candidates"
+        reasons.append("scope: " + ", ".join(t for ts in matches.values() for t in ts)[:200])
+    sole = sa == "SDVOSB sole source" or has(text, "intent to sole source") or has(text, "intent to award sole source")
+    if not sa.startswith("SDVOSB"):
+        blocked.append("Not an SDVOSB set-aside (" + sa + ")")
+        route, lane = 0, LANE_BLOCKED
+    elif sole:
+        route, lane = 2, LANE_SOLE
+        risks.append("Sole source: not an open competition; review any capability-response avenue")
+    elif early:
+        route, lane = 12, LANE_EARLY
     else:
-        route, lane = 5, "Secondary teaming candidates"
-    if early:
-        lane = "Early-stage / market shaping"
-    if wex:
-        lane = "WEXMAC public-notice watch"
-        risks.append("WEXMAC: verify Weston's specific award/region/task-order access. This public scan cannot see holder-only orders; TITUS access is not assumed.")
-    if sa.startswith(("8(a)", "WOSB", "EDWOSB", "Indian", "Buy Indian")):
-        blocked.append("Required certification not established for Weston: " + sa)
-    if sa.startswith("HUBZone") and not cfg["hubzone_certified"]:
-        blocked.append("HUBZone is a prospective pathway, not a confirmed certification")
-    if sa.startswith("Unknown") or sa == "Local area":
-        risks.append("Set-aside eligibility requires manual verification: " + sa)
-    if "sole source" in sa.lower() or has(text, "intent to sole source") or has(text, "intent to award sole source"):
-        lane = "Market intelligence / sole-source watch"
-        risks.append("Not treated as an open competition; review any capability-response avenue")
+        route, lane = 20, LANE_COMPETITIVE
+    if va:
+        reasons.append("VA buyer (Veterans First)")
     due, date_note = due_date(o["deadline"])
     days = (due - now).total_seconds() / 86400 if due else None
     o["days_left"] = round(days, 1) if days is not None else None
@@ -305,48 +317,48 @@ def score(o: dict, cfg: dict, now: datetime) -> dict:
     if date_note:
         risks.append(date_note)
     timing = 15 if days is not None and days >= 21 else 12 if days is not None and days >= 10 else 7 if days is not None and days >= 4 else 2
-    # A team can add staff, partners and resources. No prime-only capacity proxy.
     for risk, terms in RISK_TERMS.items():
         if any(has(text, t) for t in terms):
             risks.append(risk)
     if code.startswith(("236", "237", "238")):
-        risks.append("Construction: develop prime licensing, bonding, safety and workshare arrangements")
+        risks.append("Construction: plan licensing, bonding, safety and workshare for the offering entity")
     if code == "541330":
-        risks.append("Confirm whether this is qualifications-based A-E procurement and address prime licensing/experience requirements in the team structure")
+        risks.append("Check whether this is a qualifications-based A-E procurement (SF330)")
     if any(has(text, t) for t in ["clinical staffing", "nursing services", "physician services", "medical residency", "registered nurse", "anesthesiology"]):
-        risks.append("Clinical/specialist delivery needs a qualified team; capability is not established by this scan. Retained for review, not excluded.")
+        risks.append("Clinical/specialist delivery needs a qualified team; retained for review, not excluded.")
     agency = 10 if va else 7 if any(k in o["agency"].upper() for k in ["ENERGY", "NAVY", "CORPS OF ENGINEERS", "ENVIRONMENTAL PROTECTION"]) else 3
     geo = 5 if set(o["states"]) & set(cfg["preferred_states"]) else 3 if o["states"] else 1
     parts = {"team_scope_fit_50": fit, "contracting_route_20": route,
              "response_time_15": timing, "agency_fit_10": agency, "location_5": geo}
     total = sum(parts.values())
-    if fam == "unverified specialty" and not wex:
-        risks.append("Specialty team structure requires review; lack of a configured discipline does not exclude this opportunity")
+    if fam == "unverified specialty":
+        risks.append("Specialty team structure requires team review; not excluded")
     if not o["description"] or o["description_status"].startswith("cached"):
-        risks.append("Description unavailable/not fetched: title-only assessment; attachments not reviewed")
+        risks.append("Description not fetched today: title-only assessment")
         total = min(total, 64)
     if not due or o["active"] not in {"yes", "true", "1"} or o["refresh"] == "unavailable":
         total = min(total, 49)
-    if code not in REGISTERED and code not in ADJACENT and not matches and not wex:
-        risks.append("Scope alignment not established by current metadata; retained for team review")
+    scoped = in_team_scope(o, cfg)
+    if not scoped and lane in {LANE_COMPETITIVE, LANE_EARLY, LANE_SOLE}:
+        lane = LANE_OUTSIDE
+        risks.append("NAICS/scope outside the configured team list; retained for team review")
     if o["type"].lower() not in {"sources sought", "presolicitation", "pre-solicitation", "solicitation", "combined synopsis/solicitation"}:
-        if not wex:
-            blocked.append("Not an actionable solicitation / market-research notice")
-        else:
-            lane = "WEXMAC public-notice watch"
+        blocked.append("Not an actionable solicitation / market-research notice")
+    if lane == LANE_SOLE:
+        total = min(total, 54)  # intelligence only; never outranks open competitions
     if blocked:
-        total, lane = 0, "Excluded / blocked"
+        total, lane = 0, LANE_BLOCKED
     rating = "Priority review" if total >= 75 else "Qualify" if total >= 55 else "Watch / verify"
     if early and not blocked:
         rating = "Shape requirement - not a bid"
     if blocked:
         rating = "Do not pursue as currently classified"
-    risks.append("Define staffing, specialist partners, workshare and prime control with Weston/E2; these are planning items, not capacity-based rejection reasons. Check requirements at the applicable proposal, award and performance stages.")
-    risks.append("Confirm solicitation permits proposed subcontractor experience; E2/JV past performance is not automatically Weston's")
-    o.update(score=total, rating=rating, lane=lane, family=fam, setaside=sa,
+    risks.append("Past performance: under prime/sub, E2 experience counts where the solicitation credits proposed subcontractors; under an approved mentor-protege JV, each member's experience is considered.")
+    o.update(score=total, rating=rating, lane=lane, family=fam, setaside=sa, in_scope=scoped,
              components=parts, why=reasons, risks=risks, blockers=blocked,
-             workshare=workshare(code), roles=FAMILIES.get(fam, ([], "Weston/E2: identify the necessary personnel, specialist partners and compliant prime/sub work split."))[1],
-             next_step="Review solicitation/attachments and eligibility; assess the combined team and additional partners, obtain E2 scope/pricing, and develop the delivery and workshare structure. Do not require Weston to perform the whole scope alone.")
+             workshare=workshare(code), pathway=PATHWAY,
+             roles=FAMILIES.get(fam, ([], "WTC: SDVOSB lead. E2: technical delivery. Identify any additional specialist partners."))[1],
+             next_step="Review the solicitation and attachments, confirm E2 Federal interest and scope, and choose the delivery pathway (prime/sub now, mentor-protege JV once approved).")
     return o
 
 
@@ -445,19 +457,14 @@ def bounds(start, end) -> dict:
 
 
 def discover(client: SamClient, cfg: dict, now: datetime, previous: dict) -> dict:
+    """Pull every SDVOSB set-aside notice posted in the window; team scope is scored locally."""
     today = now.date()
-    codes = sorted(set(REGISTERED) | (set(ADJACENT) if cfg["include_adjacent_naics"] else set()))
+    first = not previous.get("last_success") or SDVOSB_BACKFILL not in previous.get("completed_backfills", [])
+    days = int(cfg["initial_days"] if first else cfg["discovery_days"])
     seen = {}
-    first = not previous.get("last_success")
-    for i, code in enumerate(codes):
-        days = 364 if i % 7 == today.weekday() else int(cfg["initial_days"] if first else cfg["discovery_days"])
-        if code not in previous.get("completed_backfills", []):
-            days = max(days, DISCOVERY_BACKFILLS.get(code, 0))
-        for raw in client.search({**bounds(today - timedelta(days=days), today), "ncode": code}):
-            o = normalize(raw)
-            seen[o["id"]] = o
-    for term in ["WEXMAC", "TITUS"]:
-        for raw in client.search({**bounds(today - timedelta(days=90 if first else 7), today), "title": term}):
+    for code in SDVOSB_CODES:
+        params = {**bounds(today - timedelta(days=days), today), "typeOfSetAside": code, "ptype": NOTICE_TYPES}
+        for raw in client.search(params):
             o = normalize(raw)
             seen[o["id"]] = o
     return seen
@@ -510,21 +517,22 @@ def classify_change(o: dict, previous: dict) -> str:
     return "NEW" if not old else "UPDATED" if fingerprint(o) != fingerprint(old) else "STILL OPEN"
 
 
+REPORTABLE = (LANE_COMPETITIVE, LANE_EARLY, LANE_SOLE)
+
+
+def ranked(rows: list[dict]) -> list[dict]:
+    return sorted((o for o in rows if o["lane"] in REPORTABLE),
+                  key=lambda x: (-x["score"], x["deadline"] or "9999"))
+
+
 def choose(rows: list[dict], cfg: dict) -> list[dict]:
-    chosen, counts = [], {}
-    for o in sorted(rows, key=lambda x: (-x["score"], x["deadline"] or "9999")):
-        lane = o["lane"]
-        if lane == "Excluded / blocked":
-            continue
-        # Headline limits control email length, not opportunity retention.
-        # No minimum score: remaining candidates appear in the full email index.
-        if counts.get(lane, 0) >= int(cfg["top_per_lane"]):
-            continue
-        chosen.append(o)
-        counts[lane] = counts.get(lane, 0) + 1
-        if len(chosen) >= int(cfg["max_highlights"]):
-            break
-    return chosen
+    """Top opportunities. No minimum score; headline count only limits email length."""
+    return ranked(rows)[:int(cfg["max_highlights"])]
+
+
+def shortlist(rows: list[dict], top: list[dict], cfg: dict) -> list[dict]:
+    ids = {o["id"] for o in top}
+    return [o for o in ranked(rows) if o["id"] not in ids][:int(cfg.get("shortlist_max", 15))]
 
 
 def csv_safe(v: Any) -> str:
@@ -532,118 +540,213 @@ def csv_safe(v: Any) -> str:
     return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r")) else text
 
 
+def urgency(o: dict) -> str:
+    return "\u2757" if o.get("days_left") is not None and 0 <= o["days_left"] <= 3 else ""
+
+
+def short_due(o: dict) -> str:
+    due, _ = due_date(o["deadline"])
+    return due.astimezone(EASTERN).strftime("%b %d, %Y %I:%M %p ET") if due else (o["deadline"] or "\u2014")
+
+
+def tags(o: dict) -> list[str]:
+    t = []
+    if o.get("change") in {"NEW", "UPDATED"}:
+        t.append(o["change"])
+    t.append({LANE_COMPETITIVE: "SDVOSB set-aside", LANE_EARLY: "Early stage", LANE_SOLE: "Sole source"}.get(o["lane"], o["lane"]))
+    if "VETERANS AFFAIRS" in o["agency"].upper():
+        t.append("VA")
+    if o["family"] != "unverified specialty":
+        t.append(o["family"].title())
+    return t
+
+
+def why(o: dict) -> str:
+    return "; ".join(o["why"][:3]) or "SDVOSB set-aside; review scope"
+
+
+def stats_for(rows: list[dict]) -> dict:
+    rep = [o for o in rows if o["lane"] in REPORTABLE]
+    return {"in_scope": len(rep),
+            "competitive": sum(o["lane"] == LANE_COMPETITIVE for o in rep),
+            "early": sum(o["lane"] == LANE_EARLY for o in rep),
+            "sole": sum(o["lane"] == LANE_SOLE for o in rep),
+            "va": sum("VETERANS AFFAIRS" in o["agency"].upper() for o in rep),
+            "outside": sum(o["lane"] == LANE_OUTSIDE for o in rows),
+            "pulled": len(rows)}
+
+
+EXPORT_FIELDS = ["rank_group", "score", "rating", "lane", "change", "title", "agency", "location", "type",
+                 "setaside", "naics", "deadline", "days_left", "solicitation", "url", "why", "roles",
+                 "workshare", "risks", "blockers", "components", "description_status", "refresh", "id"]
+
+
+def export_rows(rows: list[dict], top: list[dict], short: list[dict]) -> list[dict]:
+    t, sl = {o["id"] for o in top}, {o["id"] for o in short}
+    out = []
+    for o in sorted(rows, key=lambda x: -x["score"]):
+        group = "Top" if o["id"] in t else "Other strong match" if o["id"] in sl else o["lane"]
+        out.append({**o, "rank_group": group})
+    return out
+
+
+def write_xlsx(path: Path, rows: list[dict], st: dict, now: datetime) -> Path | None:
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font
+    except Exception:
+        return None
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SDVOSB Opportunities"
+    ws.append(EXPORT_FIELDS)
+    for o in rows:
+        ws.append([csv_safe(o.get(k, "")) for k in EXPORT_FIELDS])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for row in ws.iter_rows(min_row=1):
+        for c in row:
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.freeze_panes, ws.auto_filter.ref = "A2", ws.dimensions
+    sm = wb.create_sheet("Summary")
+    for r in [["Metric", "Value"], ["Generated", now.astimezone(EASTERN).strftime("%Y-%m-%d %H:%M ET")],
+              ["SDVOSB notices pulled", st["pulled"]], ["In team scope", st["in_scope"]],
+              ["Competitive SDVOSB set-asides", st["competitive"]], ["Early stage", st["early"]],
+              ["Sole source (intel)", st["sole"]], ["VA buyers", st["va"]],
+              ["SDVOSB outside team NAICS", st["outside"]], ["Team pathway", PATHWAY]]:
+        sm.append(r)
+    sm.column_dimensions["A"].width, sm.column_dimensions["B"].width = 34, 90
+    wb.save(path)
+    return path
+
+
 def write_report(rows: list[dict], selected: list[dict], cfg: dict, now: datetime, out: Path, demo: bool) -> list[Path]:
     out.mkdir(parents=True, exist_ok=True)
-    tag = "DEMO - SYNTHETIC DATA - " if demo else ""
-    headline = tag + "Weston prime + E2 technical partner | Daily capture report"
-    intro = ("Scores rank potential TEAM opportunity fit, NOT Weston's standalone capacity, win probability or bid approval. "
-             "No capacity, staffing, workshare, contract-size, complexity, licensing, bonding or clearance assumption causes exclusion or a score penalty. "
-             "These are review notes; the team and delivery structure are to be developed. "
-             "Weston is the proposed SDVOSB prime; E2 is a non-similarly-situated technical subcontractor unless established otherwise. "
-             "No JV, HUBZone approval, bonding, clearance or transferable past performance is assumed. "
-             "Contract value, profit and incumbent are unknown unless separately verified. Attachments are linked, not parsed. "
-             "Saved notices are refreshed before old deadlines are applied. Public SAM does not expose all WEXMAC holder-only task orders.")
-    coverage = (f"Generated {now.astimezone(EASTERN).isoformat()}. {len(rows)} records evaluated; {len(selected)} highlighted. "
-                "Every non-blocked record is shown below or in the additional ranked index, with all records in the CSV/JSON archive. "
-                "Only detailed highlights and previously tracked records enter the persistent watchlist. "
-                f"Discovery: {cfg['discovery_days']}-day rolling window; {cfg['initial_days']}-day initial window; "
-                "one-year backfill rotates across codes weekly. This is a bounded search, not an exhaustive universe of all procurement notices. "
-                "E2 Federal: RRM2YJMNTPX1 / 14TE2; 17 corroborated SAM-derived codes, direct entity export pending.")
-    lines = [headline, "", coverage, "", intro, ""]
-    panels = [f"<h1>{html.escape(headline)}</h1><p>{html.escape(coverage)}</p><p>{html.escape(intro)}</p>"]
-    lanes = ["SDVOSB prime candidates", "Early-stage / market shaping", "Secondary teaming candidates",
-             "WEXMAC public-notice watch", "Market intelligence / sole-source watch", "Unverified saved notices"]
-    for lane in lanes:
-        entries = [o for o in selected if o["lane"] == lane]
-        if not entries:
-            continue
-        lines.append(lane.upper())
-        panels.append(f"<h2>{html.escape(lane)}</h2>")
-        for o in entries:
-            urgency = "DUE WITHIN 72 HOURS | " if o["days_left"] is not None and 0 <= o["days_left"] <= 3 else ""
-            title = f"{o['score']}/100 | {o['rating']} | {o['change']} | {urgency}{o['title']}"
-            body = [f"{o['agency']} | {o['location']}",
-                    f"{o['type']} | {o['setaside']} | NAICS {o['naics']} | Solicitation {o['solicitation'] or 'not supplied'}",
-                    f"Deadline: {o['deadline'] or 'not supplied'} | Days remaining: {o['days_left']}",
-                    "Why: " + "; ".join(o["why"]),
-                    "Score breakdown: " + json.dumps(o["components"]),
-                    "Notice excerpt (" + o["description_status"] + "): " + (o["description"][:550] or "Description unavailable - verify source"),
-                    "Possible roles: " + o["roles"], "Workshare review: " + o["workshare"],
-                    "Review / structuring notes: " + "; ".join(o["risks"]), "Next action: " + o["next_step"],
-                    "Source: " + o["url"]]
-            lines += [title, *body, ""]
-            panels.append('<article><h3>' + html.escape(title) + '</h3>' +
-                          ''.join('<p>' + html.escape(x) + '</p>' for x in body[:-1]) +
-                          (f'<p><a href="{html.escape(o["url"], quote=True)}">Open SAM.gov notice</a></p>' if o["url"] else '') + '</article>')
-    if not selected:
-        msg = "No current candidate notices were available for highlights in this successful scan. No filler recommendations were created."
-        lines.append(msg)
-        panels.append("<p>" + msg + "</p>")
-    selected_ids = {o["id"] for o in selected}
-    additional = sorted((o for o in rows if o["id"] not in selected_ids and o["lane"] != "Excluded / blocked"),
-                        key=lambda x: (-x["score"], x["deadline"] or "9999"))
-    if additional:
-        lines += ["", "ADDITIONAL RANKED OPPORTUNITIES - NOT EXCLUDED",
-                  "These remain in the candidate pool. Headline space is limited; a low score is not a no-bid decision."]
-        panels.append("<h2>Additional ranked opportunities - not excluded</h2><p>All other candidates, including lower-scoring and verification-needed records. Headline space is limited; a low score is not a no-bid decision.</p>")
-        panels.append("<table style='width:100%;border-collapse:collapse'><thead><tr><th>Score</th><th>Opportunity</th><th>Deadline / review notes</th></tr></thead><tbody>")
-        for o in additional:
-            review = "; ".join(o["risks"])
-            lines += [f"{o['score']}/100 | {o['lane']} | {o['title']}",
-                      f"{o['agency']} | NAICS {o['naics']} | {o['setaside']} | Deadline: {o['deadline'] or 'not supplied'}",
-                      "Review: " + review, "Source: " + o["url"], ""]
-            label = html.escape(o["title"])
-            if o["url"]:
-                label = f'<a href="{html.escape(o["url"], quote=True)}">{label}</a>'
-            panels.append("<tr><td style='vertical-align:top;padding:8px'>" + str(o["score"]) +
-                          "</td><td style='vertical-align:top;padding:8px'>" + label + "<br>" +
-                          html.escape(o["lane"] + " | " + o["agency"] + " | " + o["setaside"]) +
-                          "</td><td style='vertical-align:top;padding:8px'>" +
-                          html.escape(o["deadline"] or "Deadline not supplied") + "<br>" + html.escape(review) + "</td></tr>")
-        panels.append("</tbody></table>")
-    blocked_count = sum(o["lane"] == "Excluded / blocked" for o in rows)
-    if blocked_count:
-        note = (f"{blocked_count} records are separated from the candidate list because of notice status/type "
-                "or an unestablished set-aside certification, not assumed delivery capacity. Their exact reasons remain in the full CSV/JSON archive.")
-        lines.append(note)
-        panels.append("<p>" + html.escape(note) + "</p>")
-    tracked_missing = [o for o in rows if o["refresh"] == "unavailable"]
-    if tracked_missing:
-        warning = "UNVERIFIED SAVED NOTICES: " + "; ".join(o["id"] + " " + o["title"] for o in tracked_missing)
-        lines += [warning]
-        panels.append("<p><strong>" + html.escape(warning) + "</strong></p>")
-    footer = ("Opportunity discovery does not decide the final team or work allocation. Staffing, partners and workshare are review items, not automatic no-bid decisions. "
-              "Check SBA certification, size, licensing, bonding, experience and control requirements at the applicable proposal, award and performance stages. "
-              "Resolve owner employment/conflict-of-interest issues with counsel. No proposals or outreach are sent by this scanner.")
-    sources = ["https://www.acquisition.gov/far/52.219-14",
-               "https://www.ecfr.gov/current/title-13/chapter-I/part-121/section-121.103",
-               "https://open.gsa.gov/api/get-opportunities-public-api/",
-               "https://e2.com/services/federal-services/"]
-    lines += [footer, "Sources / rules: " + " | ".join(sources)]
-    panels += ["<p>" + html.escape(footer) + "</p>", "<p>Sources: " + " | ".join(f'<a href="{s}">{html.escape(s)}</a>' for s in sources) + "</p>"]
-    paths = [out / "email_draft.txt", out / "email_draft.html", out / "opportunities.csv", out / "opportunities.json"]
-    paths[0].write_text("\n".join(lines) + "\n", encoding="utf-8")
-    paths[1].write_text('<!doctype html><html><head><meta charset="utf-8"><style>body{font:15px Arial,sans-serif;max-width:1050px;margin:auto;padding:24px;line-height:1.5;color:#172b4d}h1{font-size:26px}h2{border-bottom:2px solid #246b75;padding-top:18px}article{border:1px solid #ccd5df;border-left:5px solid #246b75;padding:15px;margin:16px 0}p{margin:8px 0}a{color:#125f92}</style></head><body>' + "".join(panels) + '</body></html>', encoding="utf-8")
-    fields = ["score", "rating", "lane", "change", "title", "agency", "location", "type", "setaside", "naics", "deadline", "days_left", "solicitation", "url", "why", "risks", "blockers", "workshare", "roles", "components", "description_status", "refresh"]
+    esc = lambda x: html.escape(str(x if x is not None else ""))
+    top = selected
+    short = shortlist(rows, top, cfg)
+    st = stats_for(rows)
+    local = now.astimezone(EASTERN)
+    demo_tag = "DEMO - SYNTHETIC DATA - " if demo else ""
+    title = demo_tag + "SDVOSB Team Opportunities \u2014 WTC + E2 Federal Services"
+
+    # ---------- text ----------
+    L = ["Good morning,", "",
+         f"Today's SAM.gov scan of SDVOSB set-aside notices for the WTC / E2 Federal Services team.",
+         "Team pathway: " + PATHWAY,
+         f"New postings: last ~{cfg['discovery_days']} days. Open notices from prior reports refreshed daily through their deadlines.",
+         f"SDVOSB notices pulled: {st['pulled']}",
+         f"In team scope: {st['in_scope']}",
+         f"  Competitive SDVOSB set-asides: {st['competitive']}",
+         f"  Early stage (sources sought / presolicitation): {st['early']}",
+         f"  Sole source (market intelligence): {st['sole']}",
+         f"  VA buyers: {st['va']}",
+         f"Top opportunities: {len(top)}",
+         f"Other strong matches: {len(short)}",
+         "\u2757 = response due within 3 days. NEW/UPDATED compare against prior reports.", "",
+         "HIGH PRIORITY / TOP OPPORTUNITIES", "=" * 72]
+    if not top:
+        L.append("No top opportunities found for this run.")
+    for n, o in enumerate(top, 1):
+        L += [f"{n}) {urgency(o)} {o['title']}".replace(")  ", ") "),
+              f"   - Score: {o['score']}/100 | {o['rating']}",
+              f"   - Tags: {' | '.join(tags(o))}",
+              f"   - Agency/Office: {o['agency'] or chr(8212)}",
+              f"   - Location: {o['location']}",
+              f"   - Set-aside: {o['setaside']} | Type: {o['type']}",
+              f"   - Posted: {o['posted'][:10] or chr(8212)} | Due: {short_due(o)}",
+              f"   - NAICS: {o['naics'] or chr(8212)} | Solicitation: {o['solicitation'] or chr(8212)}",
+              f"   - Why it matters: {why(o)}",
+              f"   - Team roles: {o['roles']}",
+              f"   - Next step: {o['next_step']}",
+              f"   - SAM link: {o['url']}", ""]
+    L += ["OTHER STRONG MATCHES", "=" * 72]
+    if not short:
+        L.append("No additional matches for this run.")
+    for o in short:
+        label = {LANE_COMPETITIVE: "SDVOSB", LANE_EARLY: "Early stage", LANE_SOLE: "Sole source"}[o["lane"]]
+        L += [f"- {urgency(o)} [{label}] {o['title']} | Score {o['score']} | "
+              f"{o['location']} | Due {short_due(o)}".replace("-  [", "- ["), f"  {o['url']}"]
+    L += ["", "Lower-ranked in-scope notices are not excluded; the full ranked list is attached (Excel/CSV), "
+          "with team roles, workshare notes for both pathways, and review notes per row.",
+          "Scores rank team fit (scope, set-aside route, time to respond, agency, location); they are not win probability or bid decisions."]
+    unverified = sum(o["refresh"] == "unavailable" for o in rows)
+    if unverified:
+        L.append(f"{unverified} previously reported notice(s) could not be refreshed today; listed in the attachment for retry.")
+
+    # ---------- html ----------
+    td = "vertical-align:top;padding:8px;border-bottom:1px solid #ddd;"
+    def card(n, o):
+        chips = " ".join(f"<span style='background:#0B3D91;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-right:4px;'>{esc(t)}</span>" for t in tags(o))
+        link = f"<a href=\"{esc(o['url'])}\">Open in SAM.gov</a>" if o["url"] else ""
+        return (f"<tr><td style='{td}'>{n}</td><td style='{td}'>"
+                f"<div style='font-weight:700;font-size:14px;'>{esc((urgency(o) + ' ' + o['title']).strip())}</div>"
+                f"<div style='margin-top:4px;'>{chips}</div><div style='margin-top:4px;'>{link}</div>"
+                f"<div style='margin-top:6px;color:#444;'><strong>Why it matters:</strong> {esc(why(o))}</div>"
+                f"<div style='margin-top:4px;color:#444;'><strong>Team roles:</strong> {esc(o['roles'])}</div></td>"
+                f"<td style='{td}'>{esc(o['agency'] or chr(8212))}</td><td style='{td}'>{esc(o['location'])}</td>"
+                f"<td style='{td}'>{esc(o['setaside'])}<br><span style='color:#666;font-size:12px;'>{esc(o['type'])}</span></td>"
+                f"<td style='{td}'>{esc(short_due(o))}</td>"
+                f"<td style='{td}text-align:right;'>{o['score']}<br><span style='color:#666;font-size:12px;'>{esc(o['rating'])}</span></td></tr>")
+    rows_html = "".join(card(n, o) for n, o in enumerate(top, 1)) or "<tr><td colspan='7' style='padding:10px;'>No high-priority opportunities found for this run.</td></tr>"
+    items = "".join(
+        f"<li style='margin-bottom:8px;'><strong>{esc((urgency(o) + ' ' + o['title']).strip())}</strong><br>"
+        f"Score {o['score']} | {esc(o['location'])} | {esc(o['setaside'])} | Due {esc(short_due(o))}<br>"
+        + (f"<a href=\"{esc(o['url'])}\">Open in SAM.gov</a>" if o["url"] else "") + "</li>"
+        for o in short) or "<li>No additional matches for this run.</li>"
+    th = "text-align:left;padding:8px;border-bottom:2px solid #ccc;"
+    stat = lambda k, v: f"<td style='padding:8px 18px 8px 0;'><strong>{k}</strong><br>{v}</td>"
+    page = f"""<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial, Helvetica, sans-serif;color:#222;line-height:1.35;">
+  <h2 style="margin-bottom:4px;">{esc(title)}</h2>
+  <p style="margin-top:0;color:#555;">Generated {local:%b %d, %Y %H:%M} ET. New SDVOSB postings: last ~{cfg['discovery_days']} days; open notices from prior reports refreshed daily.</p>
+  <p style="color:#333;"><strong>Team pathway.</strong> {esc(PATHWAY)}</p>
+  <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:12px 0 18px 0;"><tr>
+    {stat('In team scope', st['in_scope'])}{stat('Competitive SDVOSB', st['competitive'])}{stat('Early stage', st['early'])}
+    {stat('Sole source (intel)', st['sole'])}{stat('VA buyers', st['va'])}{stat('High priority', len(top))}
+  </tr></table>
+  <h3 style="margin-bottom:8px;">High Priority / Top Opportunities</h3>
+  <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-size:13px;">
+    <thead><tr style="background:#f2f2f2;"><th style="{th}">#</th><th style="{th}">Opportunity</th><th style="{th}">Agency / Office</th>
+    <th style="{th}">Location</th><th style="{th}">Set-aside</th><th style="{th}">Due</th><th style="text-align:right;padding:8px;border-bottom:2px solid #ccc;">Score</th></tr></thead>
+    <tbody>{rows_html}</tbody></table>
+  <h3 style="margin-top:22px;">Other Strong Matches</h3>
+  <ol>{items}</ol>
+  <p style="margin-top:18px;">Lower-ranked in-scope notices are not excluded. The full ranked list is attached (Excel/CSV) with team roles, workshare notes for both pathways, and review notes per row.</p>
+  <p style="color:#666;font-size:12px;">Scores rank team fit (scope, set-aside route, time to respond, agency, location), not win probability or bid decisions. Attachments on SAM.gov are linked, not reviewed. Validate eligibility, workshare and past-performance treatment against each solicitation.</p>
+</body></html>"""
+
+    ex = export_rows(rows, top, short)
+    paths = [out / "email_draft.txt", out / "email_draft.html", out / "sdvosb_team_opportunities.csv", out / "opportunities.json"]
+    paths[0].write_text(("" if not demo else demo_tag + "\n\n") + "\n".join(L) + "\n", encoding="utf-8")
+    paths[1].write_text(page, encoding="utf-8")
     with paths[2].open("w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows({k: csv_safe(o.get(k, "")) for k in fields} for o in sorted(rows, key=lambda x: -x["score"]))
+        w = csv.DictWriter(f, fieldnames=EXPORT_FIELDS)
+        w.writeheader()
+        w.writerows({k: csv_safe(o.get(k, "")) for k in EXPORT_FIELDS} for o in ex)
     paths[3].write_text(json.dumps(rows, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    x = write_xlsx(out / "sdvosb_team_opportunities.xlsx", ex, st, now)
+    if x:
+        paths.append(x)
     return paths
 
 
-def email_report(paths: list[Path], cfg: dict, now: datetime, send: bool, demo: bool) -> None:
+def email_report(paths: list[Path], cfg: dict, now: datetime, send: bool, demo: bool, rows: list[dict] | None = None, top_n: int = 0) -> None:
     recipients = [a for _, a in getaddresses([os.getenv("REPORT_TO") or os.getenv("EMAIL_TO") or cfg["email_to"]])]
     if not recipients or any("@" not in a or "\n" in a or "\r" in a for a in recipients):
         raise RuntimeError("Invalid report recipient")
+    st = stats_for(rows or [])
     msg = EmailMessage()
-    msg["Subject"] = ("DEMO - " if demo else "") + "Weston + E2 | SDVOSB team opportunity fit | " + now.astimezone(EASTERN).strftime("%Y-%m-%d")
+    msg["Subject"] = (("DEMO - " if demo else "") + f"SDVOSB Team Opportunities \u2014 WTC + E2 Federal Services "
+                      f"({st['in_scope']} in scope | {top_n} high priority | {st['va']} VA) \u2014 {now.astimezone(EASTERN):%b %d, %Y}")
     sender = os.getenv("FROM_EMAIL") or os.getenv("SMTP_USER") or cfg["email_to"]
     msg["From"], msg["To"] = sender, ", ".join(recipients)
     msg.set_content(paths[0].read_text(encoding="utf-8"))
     msg.add_alternative(paths[1].read_text(encoding="utf-8"), subtype="html")
-    msg.add_attachment(paths[2].read_bytes(), maintype="text", subtype="csv", filename="e2_sdvosb_opportunities.csv")
+    msg.add_attachment(paths[2].read_bytes(), maintype="text", subtype="csv", filename=paths[2].name)
+    for extra in paths[4:]:
+        msg.add_attachment(extra.read_bytes(), maintype="application",
+                           subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=extra.name)
     (paths[0].parent / "email_draft.eml").write_bytes(msg.as_bytes())
     if not send:
         return
@@ -696,7 +799,7 @@ def main(argv: list[str] | None = None) -> int:
             client = SamClient(os.getenv("SAM_API_KEY", ""), cfg)
             seen = refresh_saved(client, previous, discover(client, cfg, now, previous), now)
             preliminary = sorted([score(o, cfg, now) for o in seen.values()], key=lambda o: -o["score"])
-            eligible = [o for o in preliminary if not o["blockers"] and o["refresh"] == "current"]
+            eligible = [o for o in preliminary if not o["blockers"] and o["refresh"] == "current" and o["lane"] in REPORTABLE]
             eligible.sort(key=lambda o: (o["id"] not in previous.get("notices", {}), -o["score"]))
             for o in eligible[:int(cfg["description_limit"])]:
                 target = seen[o["id"]]
@@ -716,22 +819,22 @@ def main(argv: list[str] | None = None) -> int:
             o["change"] = classify_change(o, previous)
         selected = choose(rows, cfg)
         paths = write_report(rows, selected, cfg, now, args.output, args.demo)
-        email_report(paths, cfg, now, send=os.getenv("SEND_EMAIL", "0") == "1" and not args.demo, demo=args.demo)
+        email_report(paths, cfg, now, send=os.getenv("SEND_EMAIL", "0") == "1" and not args.demo, demo=args.demo,
+                     rows=rows, top_n=len(selected))
         if not args.demo:
             tracked = set(previous["notices"]) | {o["id"] for o in selected}
             retained = {o["id"]: o for o in rows if o["id"] in tracked or any(i in tracked for i in o.get("prior_ids", []))}
             retained = {nid: o for nid, o in retained.items() if o["refresh"] == "unavailable" or not any(
-                b in {"Notice inactive, archived or cancelled", "Response deadline passed on refreshed notice"} for b in o["blockers"])}
+                b in {"Notice inactive, archived or cancelled", "Response deadline passed on refreshed notice"}
+                or b.startswith("Not an SDVOSB set-aside") for b in o["blockers"])}
             state = {"version": STATE_VERSION, "last_success": now.isoformat(), "notices": retained,
-                     "completed_backfills": sorted(set(previous.get("completed_backfills", [])) |
-                         {code for code in DISCOVERY_BACKFILLS if code in REGISTERED or
-                          (cfg["include_adjacent_naics"] and code in ADJACENT)})}
+                     "completed_backfills": sorted(set(previous.get("completed_backfills", [])) | {SDVOSB_BACKFILL})}
             args.state.parent.mkdir(parents=True, exist_ok=True)
             tmp = args.state.with_suffix(".tmp")
             tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
             tmp.replace(args.state)
         success = True
-        print(f"E2 SDVOSB report complete: {len(rows)} evaluated, {len(selected)} highlighted; email={'sent' if os.getenv('SEND_EMAIL') == '1' and not args.demo else 'draft only'}")
+        print(f"SDVOSB team report complete: {len(rows)} evaluated, {len(selected)} highlighted; email={'sent' if os.getenv('SEND_EMAIL') == '1' and not args.demo else 'draft only'}")
         return 0
     except Exception as exc:
         message = str(exc).replace(os.getenv("SAM_API_KEY") or "__NO_KEY__", "[REDACTED]")

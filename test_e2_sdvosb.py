@@ -40,9 +40,11 @@ class FeasibilityTests(unittest.TestCase):
     def test_sdvosb_prime_has_priority(self):
         row = self.assess()
         self.assertGreaterEqual(row["score"], 75)
-        self.assertEqual(row["lane"], "SDVOSB prime candidates")
-        self.assertIn("Weston", row["roles"])
+        self.assertEqual(row["lane"], s.LANE_COMPETITIVE)
+        self.assertIn("WTC", row["roles"])
         self.assertIn("50%", row["workshare"])
+        self.assertIn("mentor-protege JV", row["workshare"].replace("Mentor", "mentor"))
+        self.assertIn("mentor-protege JV", row["pathway"])
 
     def test_va_priority_over_other_agency(self):
         self.assertGreater(self.assess()["score"], self.assess(fullParentPathName="OTHER AGENCY")["score"])
@@ -50,11 +52,11 @@ class FeasibilityTests(unittest.TestCase):
     def test_no_geographic_hard_filter(self):
         row = self.assess(placeOfPerformance={"country": {"code": "NPL"}})
         self.assertGreater(row["score"], 0)
-        self.assertEqual(row["lane"], "SDVOSB prime candidates")
+        self.assertEqual(row["lane"], s.LANE_COMPETITIVE)
 
     def test_sources_sought_not_bid(self):
-        row = self.assess(type="Sources Sought", typeOfSetAside="")
-        self.assertEqual(row["lane"], "Early-stage / market shaping")
+        row = self.assess(type="Sources Sought")
+        self.assertEqual(row["lane"], s.LANE_EARLY)
         self.assertEqual(row["rating"], "Shape requirement - not a bid")
 
     def test_hubzone_not_assumed(self):
@@ -75,20 +77,29 @@ class FeasibilityTests(unittest.TestCase):
     def test_generic_sdvosb_mention_is_not_actual_setaside(self):
         row = self.assess(typeOfSetAside="", description_text="All firms including SDVOSB may reply; construction inspection.")
         self.assertEqual(row["setaside"], "Not designated")
-        self.assertNotEqual(row["lane"], "SDVOSB prime candidates")
+        self.assertEqual(row["lane"], s.LANE_BLOCKED)
 
     def test_sole_source_not_competitive_top_lane(self):
         row = self.assess(typeOfSetAside="SDVOSBS")
-        self.assertEqual(row["lane"], "Market intelligence / sole-source watch")
+        self.assertEqual(row["lane"], s.LANE_SOLE)
+        self.assertLess(row["score"], self.assess()["score"])
+        self.assertLessEqual(row["score"], 54)
 
-    def test_wexmac_separate(self):
+    def test_only_sdvosb_setasides_reported(self):
+        for code in ["", "SBA", "VSA", "NONE"]:
+            with self.subTest(code=code):
+                row = self.assess(typeOfSetAside=code)
+                self.assertEqual(row["score"], 0)
+                self.assertTrue(any("Not an SDVOSB" in b for b in row["blockers"]))
+
+    def test_out_of_scope_sdvosb_kept_in_attachment_lane(self):
+        row = self.assess(naicsCode="339113", title="Surgical supplies", description_text="Medical supply delivery")
+        self.assertEqual(row["lane"], s.LANE_OUTSIDE)
+        self.assertEqual(s.choose([row], s.DEFAULTS), [])
+
+    def test_wexmac_no_longer_special_lane(self):
         row = self.assess(title="WEXMAC logistics support", naicsCode="561210", type="Special Notice")
-        self.assertEqual(row["lane"], "WEXMAC public-notice watch")
-        self.assertTrue(any("TITUS" in r for r in row["risks"]))
-
-    def test_non_navy_titus_not_wexmac(self):
-        row = self.assess(title="Titus building inspection", fullParentPathName="OTHER AGENCY")
-        self.assertNotEqual(row["lane"], "WEXMAC public-notice watch")
+        self.assertEqual(row["lane"], s.LANE_BLOCKED)
 
     def test_awards_not_actionable(self):
         self.assertEqual(self.assess(type="Award Notice")["score"], 0)
@@ -389,23 +400,36 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class HazardousWasteDiscoveryTests(unittest.TestCase):
-    def test_new_hazardous_code_backfills_established_watchlist(self):
+class SdvosbDiscoveryTests(unittest.TestCase):
+    def test_discovery_queries_only_sdvosb_setasides(self):
         client = Mock()
         client.search.return_value = []
-        now = datetime(2026, 10, 30, tzinfo=timezone.utc)
-        s.discover(client, s.DEFAULTS, now, {"last_success": "2026-10-29", "notices": {}})
-        params = [c.args[0] for c in client.search.call_args_list if c.args[0].get("ncode") == "562112"]
-        self.assertEqual(len(params), 1)
-        self.assertEqual(params[0]["postedFrom"], "08/01/2026")
-        self.assertEqual(params[0]["postedTo"], "10/30/2026")
-        self.assertEqual(s.CODE_FAMILY["562112"], "environmental / safety")
-        self.assertNotIn("562112", s.REGISTERED)
+        s.discover(client, s.DEFAULTS, datetime(2026, 11, 5, tzinfo=timezone.utc),
+                   {"last_success": "2026-11-04", "completed_backfills": [s.SDVOSB_BACKFILL]})
+        params = [c.args[0] for c in client.search.call_args_list]
+        self.assertEqual(sorted(p["typeOfSetAside"] for p in params), ["SDVOSBC", "SDVOSBS"])
+        self.assertTrue(all("ncode" not in p for p in params))
+        self.assertEqual(params[0]["postedFrom"], "10/29/2026")
 
-    def test_completed_hazardous_backfill_returns_to_rolling_window(self):
+    def test_first_sdvosb_run_backfills_existing_watchlist(self):
         client = Mock()
         client.search.return_value = []
-        s.discover(client, s.DEFAULTS, datetime(2026, 10, 30, tzinfo=timezone.utc),
-                   {"last_success": "2026-10-29", "completed_backfills": ["562112"]})
-        params = [c.args[0] for c in client.search.call_args_list if c.args[0].get("ncode") == "562112"]
-        self.assertEqual(params[0]["postedFrom"], "10/23/2026")
+        s.discover(client, s.DEFAULTS, datetime(2026, 11, 5, tzinfo=timezone.utc),
+                   {"last_success": "2026-11-04", "completed_backfills": ["562112"]})
+        self.assertEqual(client.search.call_args_list[0].args[0]["postedFrom"], "08/07/2026")
+
+
+class ReportFormatTests(unittest.TestCase):
+    def test_report_has_usace_style_sections_and_no_saved_banner(self):
+        row = s.score(notice(), s.DEFAULTS, NOW)
+        row["change"] = "NEW"
+        stale = dict(row, id="stale", title="Old saved notice", refresh="unavailable")
+        with tempfile.TemporaryDirectory() as d:
+            paths = s.write_report([row, stale], [row], s.DEFAULTS, NOW, Path(d), False)
+            text = paths[0].read_text()
+            self.assertTrue(text.startswith("Good morning,"))
+            self.assertIn("HIGH PRIORITY / TOP OPPORTUNITIES", text)
+            self.assertIn("OTHER STRONG MATCHES", text)
+            self.assertNotIn("WARNING", text)
+            self.assertIn("High Priority / Top Opportunities", paths[1].read_text())
+            self.assertTrue(any(p.suffix == ".xlsx" for p in paths))
