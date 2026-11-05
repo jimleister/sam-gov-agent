@@ -10,7 +10,17 @@
     "typeOfSetAside": "SDVOSBC",
     "typeOfSetAsideDescription": "Service-Disabled Veteran-Owned Small Business Set Aside",
     "active": "Yes",
-    "placeOfPerformance": {"city": {"name": "Fayetteville"}, "state": {"code": "NC"}, "country": {"code": "USA"}},
+    "placeOfPerformance": {
+      "city": {
+        "name": "Fayetteville"
+      },
+      "state": {
+        "code": "NC"
+      },
+      "country": {
+        "code": "USA"
+      }
+    },
     "description_text": "SYNTHETIC EXAMPLE ONLY. Construction inspection, coating inspection, project controls and quality assurance for a medical-campus utility project. The prime/subcontract delivery structure will be developed by the team. No budget, award or incumbent is represented."
   },
   {
@@ -22,8 +32,16 @@
     "type": "Sources Sought",
     "naicsCode": "561210",
     "active": "Yes",
-    "placeOfPerformance": {"state": {"code": "VA"}, "country": {"code": "USA"}},
-    "description_text": "SYNTHETIC EXAMPLE ONLY. Sources sought to assess capabilities for facilities support, utility systems operations, preventive maintenance and environmental compliance. This is not a solicitation and no set-aside decision is represented."
+    "placeOfPerformance": {
+      "state": {
+        "code": "VA"
+      },
+      "country": {
+        "code": "USA"
+      }
+    },
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Sources sought to assess capabilities for facilities support, utility systems operations, preventive maintenance and environmental compliance. This is not a solicitation and the synthetic set-aside is SDVOSB.",
+    "typeOfSetAside": "SDVOSBC"
   },
   {
     "noticeId": "demo-e2-hubzone-003",
@@ -37,15 +55,23 @@
     "description_text": "SYNTHETIC EXAMPLE ONLY. Environmental assessment restricted to eligible HUBZone contractors. This example is separated because Weston's HUBZone certification is not established, not because of assumed delivery capacity."
   },
   {
-    "noticeId": "demo-e2-wexmac-004",
-    "title": "SYNTHETIC DEMO - WEXMAC facilities logistics public notice",
-    "fullParentPathName": "DEPT OF DEFENSE.DEPT OF THE NAVY.TEST OFFICE",
-    "fullParentPathCode": "DEMO.NAVY.01",
-    "type": "Special Notice",
-    "naicsCode": "561210",
+    "noticeId": "demo-e2-environmental-004",
+    "title": "SYNTHETIC DEMO - Environmental compliance support, intent to sole source",
+    "fullParentPathName": "DEPT OF DEFENSE.DEPT OF THE ARMY.TEST OFFICE",
+    "fullParentPathCode": "DEMO.ARMY.01",
+    "type": "Presolicitation",
+    "naicsCode": "541620",
+    "typeOfSetAside": "SDVOSBS",
     "active": "Yes",
-    "placeOfPerformance": {"state": {"code": "GU"}, "country": {"code": "USA"}},
-    "description_text": "SYNTHETIC EXAMPLE ONLY. WEXMAC logistics support and facilities maintenance planning. A public notice does not establish access to a holder-only task order or TITUS region. Check the actual awarded vehicle and ordering instructions."
+    "placeOfPerformance": {
+      "state": {
+        "code": "NC"
+      },
+      "country": {
+        "code": "USA"
+      }
+    },
+    "description_text": "SYNTHETIC EXAMPLE ONLY. Intent to sole source environmental compliance support to an SDVOSB."
   },
   {
     "noticeId": "demo-e2-clinical-005",
